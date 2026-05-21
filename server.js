@@ -94,6 +94,11 @@ app.use('/api/support-tickets', supportTicketRoutes);
 app.use('/api/patient/vitals', vitalsRoutes);
 app.use('/api/patient/activity', activityRoutes);
 
+// Root route for testing deployment
+app.get('/', (req, res) => {
+    res.status(200).json({ message: 'Medi AI Backend is running successfully!' });
+});
+
 // Error middleware
 app.use(errorHandler);
 
