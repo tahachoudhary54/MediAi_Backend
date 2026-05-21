@@ -37,7 +37,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+        origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'https://medi-ai-frontend.vercel.app', process.env.FRONTEND_URL],
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
         credentials: true
     }
@@ -75,7 +75,7 @@ app.use((req, res, next) => {
 
 // Enable CORS
 app.use(cors({
-    origin: ['http://localhost:3000', 'http://localhost:3001'], // Frontend URL
+    origin: ['http://localhost:3000', 'http://localhost:3001', 'https://medi-ai-frontend.vercel.app', process.env.FRONTEND_URL], // Frontend URL
     credentials: true,
 }));
 
