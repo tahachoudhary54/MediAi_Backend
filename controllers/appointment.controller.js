@@ -3,6 +3,8 @@ import sendEmail from '../utils/sendEmail.js';
 import User from '../models/User.js';
 import Notification from '../models/Notification.js';
 import Doctor from '../models/Doctor.js';
+import Report from '../models/Report.js';
+import HealthVitals from '../models/HealthVitals.js';
 
 // @desc    Create new appointment
 // @route   POST /api/appointments
@@ -78,6 +80,87 @@ export const createAppointment = async (req, res, next) => {
             message: `You have a new appointment request from ${req.user.fullName} on ${new Date(date).toLocaleDateString()}.`,
             type: 'general',
             route: '/doctor/appointments'
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Get all unique patients for a doctor (from appointments)
+// @route   GET /api/appointments/doctor/patients
+// @access  Private (Doctor)
+export const getDoctorPatients = async (req, res, next) => {
+    try {
+        const doctorId = req.user._id;
+
+        // Get all appointments for this doctor (not cancelled)
+        const appointments = await Appointment.find({ 
+            doctor: doctorId 
+        }).populate('patient', 'fullName email phone age sex bloodGroup allergies currentMedications previousDiseaseHistory familyDiseaseHistory address dob avatar emergencyContact createdAt').sort({ updatedAt: -1 });
+
+        // Get unique patients
+        const patientMap = new Map();
+        for (const apt of appointments) {
+            if (apt.patient && apt.patient._id) {
+                const pid = apt.patient._id.toString();
+                if (!patientMap.has(pid)) {
+                    patientMap.set(pid, {
+                        ...apt.patient.toObject(),
+                        lastVisit: apt.date,
+                        appointmentCount: 1,
+                        lastReason: apt.reason,
+                        lastStatus: apt.status
+                    });
+                } else {
+                    const existing = patientMap.get(pid);
+                    existing.appointmentCount += 1;
+                    // Keep the most recent visit date
+                    if (new Date(apt.date) > new Date(existing.lastVisit)) {
+                        existing.lastVisit = apt.date;
+                        existing.lastReason = apt.reason;
+                        existing.lastStatus = apt.status;
+                    }
+                    patientMap.set(pid, existing);
+                }
+            }
+        }
+
+        const patients = Array.from(patientMap.values()).sort((a, b) => new Date(b.lastVisit) - new Date(a.lastVisit));
+
+        res.status(200).json({ success: true, data: patients });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Get a specific patient full profile + history for a doctor
+// @route   GET /api/appointments/doctor/patient/:patientId
+// @access  Private (Doctor)
+export const getDoctorPatientDetail = async (req, res, next) => {
+    try {
+        const doctorId = req.user._id;
+        const { patientId } = req.params;
+
+        // Verify doctor has had appointment with this patient
+        const hasAppointment = await Appointment.findOne({ doctor: doctorId, patient: patientId });
+        if (!hasAppointment) {
+            return res.status(403).json({ success: false, message: 'You do not have access to this patient.' });
+        }
+
+        const [patient, appointments, reports, vitals] = await Promise.all([
+            User.findById(patientId).select('-password -resetPasswordToken -resetPasswordExpire -adminAccessCode'),
+            Appointment.find({ doctor: doctorId, patient: patientId }).sort({ date: -1 }),
+            Report.find({ doctor: doctorId, patient: patientId }).sort({ createdAt: -1 }),
+            HealthVitals.find({ patient: patientId }).sort({ recordedAt: -1, createdAt: -1 }).limit(20)
+        ]);
+
+        if (!patient) {
+            return res.status(404).json({ success: false, message: 'Patient not found.' });
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            data: { patient, appointments, reports, vitals } 
         });
     } catch (error) {
         next(error);
