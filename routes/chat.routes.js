@@ -12,7 +12,10 @@ import {
     getPatientChats,
     cancelConsultation,
     deleteMessage,
-    deleteChat
+    deleteChat,
+    doctorRequestConsultation,
+    patientRespondToConsultation,
+    sendFollowUp
 } from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
@@ -32,6 +35,9 @@ router.post('/:id/messages', sendMessage);
 router.put('/:id/respond', authorize('doctor'), respondToConsultation);
 router.put('/:id/end', endConsultation);
 router.put('/:id/cancel', cancelConsultation);
+router.post('/doctor-request', authorize('doctor'), doctorRequestConsultation);
+router.put('/:id/patient-respond', patientRespondToConsultation);
+router.post('/:id/followup', authorize('doctor'), sendFollowUp);
 router.delete('/:chatId/messages/:messageIndex', deleteMessage);
 router.delete('/:id', deleteChat);
 

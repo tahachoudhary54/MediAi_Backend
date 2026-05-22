@@ -4,6 +4,7 @@ import Report from '../models/Report.js';
 import Doctor from '../models/Doctor.js';
 import { computeDoctorStatus } from '../utils/statusHelper.js';
 import aiClient from '../utils/aiClient.js';
+import Notification from '../models/Notification.js';
 
 // @desc    Create consultation chat
 // @route   POST /api/chats
@@ -112,6 +113,34 @@ export const sendMessage = async (req, res, next) => {
                     _id: savedMessage._id
                 }
             });
+
+            // If a doctor sent the message, emit a global notification to the patient
+            // This handles cases where the patient is not currently looking at the chat
+            if (senderModel === 'Doctor') {
+                const patientId = chat.patient._id || chat.patient;
+                
+                // Save notification to database so the bell icon updates
+                try {
+                    await Notification.create({
+                        recipient: patientId,
+                        recipientModel: 'User',
+                        title: `New message from Dr. ${req.user.fullName}`,
+                        message: savedMessage.content.length > 50 ? savedMessage.content.substring(0, 50) + '...' : savedMessage.content,
+                        type: 'general',
+                        route: `/patient/chat?chatId=${chat._id}`,
+                        isRead: false
+                    });
+                } catch (notifErr) {
+                    console.error('[Notification] Failed to save chat notification:', notifErr);
+                }
+
+                console.log(`[Message] Emitting global doctorFollowUpMessage to patient_${patientId}`);
+                io.to(`patient_${patientId}`).emit('doctorFollowUpMessage', {
+                    chatId: chat._id,
+                    doctorName: req.user.fullName,
+                    message: savedMessage
+                });
+            }
         }
 
         res.status(200).json({ success: true, data: chat });
@@ -280,24 +309,14 @@ export const requestConsultation = async (req, res, next) => {
             }
         }
 
-        // Check for existing requested pending chat request
-        const existingChat = await Chat.findOne({
-            patient: req.user._id,
-            doctor: doctorId,
-            status: 'requested'
-        });
-
-        if (existingChat) {
-            console.log(`[Chat Request] Returning existing pending requested chat for patient ${req.user._id} and doctor ${doctorId}`);
-            return res.status(200).json({ success: true, data: existingChat });
-        }
-
-        // Close/end any stale active chat sessions between this patient-doctor pair
-        console.log(`[Chat Request] Ending any stale active chats between patient ${req.user._id} and doctor ${doctorId}`);
+        // Close/end any stale active or requested chat sessions between this patient-doctor pair
+        console.log(`[Chat Request] Ending any stale chats between patient ${req.user._id} and doctor ${doctorId}`);
         await Chat.updateMany(
-            { patient: req.user._id, doctor: doctorId, status: 'active' },
+            { patient: req.user._id, doctor: doctorId, status: { $in: ['active', 'requested', 'doctor-requested'] } },
             { $set: { status: 'ended' } }
         );
+
+
 
         // Create a fresh 'requested' pending chat request
         console.log(`[Chat Request] Creating a fresh pending requested chat session.`);
@@ -353,6 +372,8 @@ export const respondToConsultation = async (req, res, next) => {
                 doctorId: chat.doctor, 
                 status: status === 'active' ? 'busy' : 'available' 
             });
+
+            io.to(`chat_${chat._id}`).emit('consultationResponded', chat);
         }
 
         // If the doctor accepts the chat, automatically transition any other orphaned 'requested' chats for this patient-doctor pair to 'ended'
@@ -561,6 +582,202 @@ export const deleteChat = async (req, res, next) => {
         await Chat.findByIdAndDelete(req.params.id);
         res.status(200).json({ success: true, message: 'Consultation deleted successfully' });
     } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Request a consultation (Doctor side)
+// @route   POST /api/chats/doctor-request
+// @access  Private (Doctor)
+export const doctorRequestConsultation = async (req, res, next) => {
+    try {
+        const { patientId } = req.body;
+        console.log(`[Chat Request] Doctor ${req.user._id} initiated chat with Patient ${patientId}`);
+
+        // Check if there is an active chat already
+        const activeChat = await Chat.findOne({
+            patient: patientId,
+            doctor: req.user._id,
+            status: 'active'
+        });
+        if (activeChat) {
+            return res.status(200).json({ success: true, data: activeChat });
+        }
+
+        // Close any stale active chats between this patient-doctor pair
+        await Chat.updateMany(
+            { patient: patientId, doctor: req.user._id, status: 'active' },
+            { $set: { status: 'ended' } }
+        );
+
+        // Check for an existing 'doctor-requested' chat
+        const existingChat = await Chat.findOne({
+            patient: patientId,
+            doctor: req.user._id,
+            status: 'doctor-requested'
+        });
+        
+        let chat;
+        if (existingChat) {
+            chat = existingChat;
+        } else {
+            chat = await Chat.create({
+                patient: patientId,
+                doctor: req.user._id,
+                status: 'doctor-requested',
+                messages: []
+            });
+        }
+
+        // Emit newChatRequest to the patient room
+        const populatedChat = await Chat.findById(chat._id).populate('doctor', 'fullName specialization');
+        const io = req.app.get('io');
+        if (io) {
+            console.log(`[Chat Request] Emitting doctorChatRequest to patient room: patient_${patientId}`);
+            io.to(`patient_${patientId}`).emit("doctorChatRequest", populatedChat);
+        }
+
+        res.status(200).json({ success: true, data: chat });
+    } catch (error) {
+        console.error(`[Chat Request Error]`, error);
+        next(error);
+    }
+};
+
+// @desc    Doctor sends a follow-up message to an ended chat
+// @route   POST /api/chats/:id/followup
+// @access  Private (Doctor)
+export const sendFollowUp = async (req, res, next) => {
+    try {
+        const { content } = req.body;
+        if (!content || !content.trim()) {
+            return res.status(400).json({ success: false, message: 'Message content is required' });
+        }
+
+        const chat = await Chat.findById(req.params.id)
+            .populate('patient', 'fullName _id')
+            .populate('doctor', 'fullName _id');
+
+        if (!chat) return res.status(404).json({ success: false, message: 'Chat not found' });
+
+        if (chat.doctor._id.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        const message = {
+            senderModel: 'Doctor',
+            senderId: req.user._id,
+            content: content.trim()
+        };
+
+        chat.messages.push(message);
+        await chat.save();
+
+        const savedMessage = chat.messages[chat.messages.length - 1];
+
+        // Save notification to database so the bell icon updates
+        const patientId = chat.patient._id || chat.patient;
+        try {
+            await Notification.create({
+                recipient: patientId,
+                recipientModel: 'User',
+                title: `New message from Dr. ${chat.doctor?.fullName || 'Doctor'}`,
+                message: savedMessage.content.length > 50 ? savedMessage.content.substring(0, 50) + '...' : savedMessage.content,
+                type: 'general',
+                route: `/patient/chat?chatId=${chat._id}`,
+                isRead: false
+            });
+        } catch (notifErr) {
+            console.error('[Notification] Failed to save chat notification:', notifErr);
+        }
+
+        // Emit to the patient's personal room for the notification popup + sound
+        const io = req.app.get('io');
+        if (io) {
+            console.log(`[Follow-Up] Emitting doctorFollowUpMessage to patient_${patientId}`);
+            io.to(`patient_${patientId}`).emit('doctorFollowUpMessage', {
+                chatId: chat._id,
+                doctorName: chat.doctor?.fullName || 'Your Doctor',
+                message: {
+                    senderModel: 'Doctor',
+                    senderId: savedMessage.senderId,
+                    content: savedMessage.content,
+                    timestamp: savedMessage.timestamp,
+                    _id: savedMessage._id
+                }
+            });
+            // Also emit to the chat room in case the patient has it open
+            io.to(`chat_${chat._id}`).emit('messageReceived', {
+                chatId: chat._id,
+                message: {
+                    senderModel: 'Doctor',
+                    senderId: savedMessage.senderId,
+                    content: savedMessage.content,
+                    timestamp: savedMessage.timestamp,
+                    _id: savedMessage._id
+                }
+            });
+        }
+
+        res.status(200).json({ success: true, data: chat });
+    } catch (error) {
+        console.error('[Follow-Up Error]', error);
+        next(error);
+    }
+};
+
+// @desc    Respond to doctor consultation request (Patient side)
+// @route   PUT /api/chats/:id/patient-respond
+// @access  Private (Patient)
+export const patientRespondToConsultation = async (req, res, next) => {
+    try {
+        const { status } = req.body; // status: 'active' or 'declined'
+        console.log(`[Chat Respond] Patient ${req.user._id} responding to Chat ${req.params.id} with status: ${status}`);
+        
+        const chat = await Chat.findById(req.params.id);
+        if (!chat) return res.status(404).json({ success: false, message: 'Chat not found' });
+
+        if (chat.patient.toString() !== req.user._id.toString()) {
+            return res.status(401).json({ success: false, message: 'Not authorized' });
+        }
+
+        chat.status = status;
+        await chat.save();
+
+        // If the patient accepts the chat, transition other 'requested' or 'doctor-requested' chats to ended
+        if (status === 'active') {
+            await Chat.updateMany(
+                {
+                    patient: chat.patient,
+                    doctor: chat.doctor,
+                    _id: { $ne: chat._id },
+                    status: { $in: ['requested', 'doctor-requested'] }
+                },
+                {
+                    $set: { status: 'ended' }
+                }
+            );
+            await Chat.updateMany(
+                {
+                    doctor: chat.doctor,
+                    _id: { $ne: chat._id },
+                    status: 'active'
+                },
+                {
+                    $set: { status: 'ended' }
+                }
+            );
+        }
+
+        // Notify the doctor about the response
+        const io = req.app.get('io');
+        if (io) {
+            io.to(`doctor_${chat.doctor}`).emit("patientChatResponse", { chatId: chat._id, status });
+        }
+
+        res.status(200).json({ success: true, data: chat });
+    } catch (error) {
+        console.error(`[Chat Respond Error]`, error);
         next(error);
     }
 };
