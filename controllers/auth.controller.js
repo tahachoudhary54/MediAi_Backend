@@ -4,6 +4,24 @@ import Chat from '../models/Chat.js';
 import { computeDoctorStatus } from '../utils/statusHelper.js';
 import generateToken from '../utils/generateToken.js';
 import crypto from 'crypto';
+import sendEmail from '../utils/sendEmail.js';
+
+// Helper to generate OTP
+const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+const getOtpTemplate = (otp) => `
+<div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+  <h2 style="color: #0d9488; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">MediAI Healthcare</h2>
+  <p>Hello,</p>
+  <p>We received a request to verify your email address. Your verification code is:</p>
+  <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #0d9488; margin: 20px 0; padding: 15px; background: #f0fdfa; border-radius: 8px; text-align: center; border: 1px dashed #5eead4;">
+    ${otp}
+  </div>
+  <p>This code will expire in 10 minutes. If you did not request this, you can safely ignore this email.</p>
+  <br>
+  <p style="color: #64748b; font-size: 14px;">Best regards,<br>The MediAI Team</p>
+</div>
+`;
 
 // Helper to send token response
 const sendTokenResponse = (user, statusCode, res, isDoctor = false) => {
@@ -34,19 +52,55 @@ export const registerPatient = async (req, res, next) => {
         let { fullName, email, password, age, sex, bloodGroup, allergies, currentMedications, previousDiseaseHistory, familyDiseaseHistory, emergencyContact, location } = req.body;
         if (email) email = email.toLowerCase();
 
-        // Check if user exists in either collection
-        const userExists = await User.findOne({ email });
+        let userExists = await User.findOne({ email });
         const doctorExists = await Doctor.findOne({ email });
         
-        if (userExists || doctorExists) {
+        if (doctorExists) {
             return res.status(400).json({ success: false, message: 'Email already registered' });
         }
 
-        const user = await User.create({
-            fullName, email, password, role: 'patient', age, sex, bloodGroup, allergies, currentMedications, previousDiseaseHistory, familyDiseaseHistory, emergencyContact, location
-        });
+        const otp = generateOtp();
+        const otpExpire = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
-        sendTokenResponse(user, 201, res);
+        let user;
+        if (userExists) {
+            if (userExists.isVerified) {
+                return res.status(400).json({ success: false, message: 'Email already registered and verified' });
+            }
+            userExists.fullName = fullName;
+            userExists.password = password;
+            userExists.age = age;
+            userExists.sex = sex;
+            userExists.bloodGroup = bloodGroup;
+            userExists.allergies = allergies;
+            userExists.currentMedications = currentMedications;
+            userExists.previousDiseaseHistory = previousDiseaseHistory;
+            userExists.familyDiseaseHistory = familyDiseaseHistory;
+            userExists.emergencyContact = emergencyContact;
+            userExists.location = location;
+            userExists.otp = otp;
+            userExists.otpExpire = otpExpire;
+            await userExists.save();
+            user = userExists;
+        } else {
+            user = await User.create({
+                fullName, email, password, role: 'patient', age, sex, bloodGroup, allergies, currentMedications, previousDiseaseHistory, familyDiseaseHistory, emergencyContact, location,
+                otp, otpExpire, isVerified: false
+            });
+        }
+
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'MediAI - Verify Your Email',
+                message: `Hello,\n\nWe received a request to verify your email address. Your verification code is: ${otp}\n\nThis code will expire in 10 minutes. If you did not request this, you can safely ignore this email.\n\nBest regards,\nThe MediAI Team`,
+                html: getOtpTemplate(otp)
+            });
+        } catch (error) {
+            console.error('Email sending failed', error);
+        }
+
+        res.status(200).json({ success: true, message: 'OTP sent to email', requireOtp: true });
     } catch (error) {
         next(error);
     }
@@ -60,26 +114,165 @@ export const registerDoctor = async (req, res, next) => {
         let { fullName, email, password, specialization, licenseNumber, yearsOfExperience, hospitalName, clinicAddress, phone, location } = req.body;
         if (email) email = email.toLowerCase();
 
-        // Check if user exists in either collection
         const userExists = await User.findOne({ email });
-        const doctorExists = await Doctor.findOne({ email });
+        let doctorExists = await Doctor.findOne({ email });
         
-        if (userExists || doctorExists) {
+        if (userExists) {
             return res.status(400).json({ success: false, message: 'Email already registered' });
         }
 
-        // Handle file uploads via req.files
+        const otp = generateOtp();
+        const otpExpire = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
         let degreeCertificate = req.files?.['degreeCertificate']?.[0]?.filename || '';
         let governmentId = req.files?.['governmentId']?.[0]?.filename || '';
         let medicalLicenseProof = req.files?.['medicalLicenseProof']?.[0]?.filename || '';
         let avatar = req.files?.['profilePhoto']?.[0]?.filename || '';
 
-        const doctor = await Doctor.create({
-            fullName, email, password, role: 'doctor', specialization, licenseNumber, yearsOfExperience, hospitalName, clinicAddress, phone, location,
-            degreeCertificate, governmentId, medicalLicenseProof, avatar, verificationStatus: 'pending'
-        });
+        let doctor;
+        if (doctorExists) {
+            if (doctorExists.isVerified) {
+                return res.status(400).json({ success: false, message: 'Email already registered and verified' });
+            }
+            doctorExists.fullName = fullName;
+            doctorExists.password = password;
+            doctorExists.specialization = specialization;
+            doctorExists.licenseNumber = licenseNumber;
+            doctorExists.yearsOfExperience = yearsOfExperience;
+            doctorExists.hospitalName = hospitalName;
+            doctorExists.clinicAddress = clinicAddress;
+            doctorExists.phone = phone;
+            doctorExists.location = location;
+            if (degreeCertificate) doctorExists.degreeCertificate = degreeCertificate;
+            if (governmentId) doctorExists.governmentId = governmentId;
+            if (medicalLicenseProof) doctorExists.medicalLicenseProof = medicalLicenseProof;
+            if (avatar) doctorExists.avatar = avatar;
+            doctorExists.otp = otp;
+            doctorExists.otpExpire = otpExpire;
+            await doctorExists.save();
+            doctor = doctorExists;
+        } else {
+            doctor = await Doctor.create({
+                fullName, email, password, role: 'doctor', specialization, licenseNumber, yearsOfExperience, hospitalName, clinicAddress, phone, location,
+                degreeCertificate, governmentId, medicalLicenseProof, avatar, verificationStatus: 'pending',
+                otp, otpExpire, isVerified: false
+            });
+        }
 
-        sendTokenResponse(doctor, 201, res, true);
+        try {
+            await sendEmail({
+                email: doctor.email,
+                subject: 'MediAI - Verify Your Email',
+                message: `Hello,\n\nWe received a request to verify your email address. Your verification code is: ${otp}\n\nThis code will expire in 10 minutes. If you did not request this, you can safely ignore this email.\n\nBest regards,\nThe MediAI Team`,
+                html: getOtpTemplate(otp)
+            });
+        } catch (error) {
+            console.error('Email sending failed', error);
+        }
+
+        res.status(200).json({ success: true, message: 'OTP sent to email', requireOtp: true, verificationStatus: 'pending' });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Verify OTP for registration
+// @route   POST /api/auth/verify-otp
+// @access  Public
+export const verifyOtp = async (req, res, next) => {
+    try {
+        let { email, otp, role } = req.body;
+        if (email) email = email.toLowerCase();
+
+        if (!email || !otp) {
+            return res.status(400).json({ success: false, message: 'Please provide email and OTP' });
+        }
+
+        let user;
+        let isDoctor = false;
+
+        if (role === 'doctor') {
+            user = await Doctor.findOne({ email });
+            isDoctor = true;
+        } else {
+            user = await User.findOne({ email });
+        }
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        if (user.isVerified) {
+            return res.status(400).json({ success: false, message: 'User is already verified' });
+        }
+
+        if (user.otp !== otp) {
+            return res.status(400).json({ success: false, message: 'Invalid OTP' });
+        }
+
+        if (user.otpExpire < new Date()) {
+            return res.status(400).json({ success: false, message: 'OTP has expired. Please register again.' });
+        }
+
+        user.isVerified = true;
+        user.otp = undefined;
+        user.otpExpire = undefined;
+        await user.save();
+
+        sendTokenResponse(user, 200, res, isDoctor);
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Resend OTP for registration
+// @route   POST /api/auth/resend-otp
+// @access  Public
+export const resendOtp = async (req, res, next) => {
+    try {
+        let { email, role } = req.body;
+        if (email) email = email.toLowerCase();
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Please provide email' });
+        }
+
+        let user;
+        if (role === 'doctor') {
+            user = await Doctor.findOne({ email });
+        } else {
+            user = await User.findOne({ email });
+        }
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        if (user.isVerified) {
+            return res.status(400).json({ success: false, message: 'User is already verified' });
+        }
+
+        const otp = generateOtp();
+        const otpExpire = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
+        user.otp = otp;
+        user.otpExpire = otpExpire;
+        await user.save();
+
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'MediAI - Resend OTP Verification',
+                message: `Hello,\n\nWe received a request to verify your email address. Your verification code is: ${otp}\n\nThis code will expire in 10 minutes. If you did not request this, you can safely ignore this email.\n\nBest regards,\nThe MediAI Team`,
+                html: getOtpTemplate(otp)
+            });
+        } catch (error) {
+            console.error('Email sending failed', error);
+        }
+
+        res.status(200).json({ success: true, message: 'New OTP sent to your email' });
+
     } catch (error) {
         next(error);
     }
@@ -199,6 +392,11 @@ export const login = async (req, res, next) => {
         if (accountStatus === 'suspended') {
             console.log('[Login] Account suspended');
             return res.status(403).json({ success: false, message: 'Account is suspended' });
+        }
+        
+        if (user.isVerified === false && user.role !== 'admin') {
+            console.log('[Login] Account not verified');
+            return res.status(401).json({ success: false, message: 'Please verify your email to log in' });
         }
 
         console.log(`[Login] Success: ${user.email} logged in as ${user.role}`);

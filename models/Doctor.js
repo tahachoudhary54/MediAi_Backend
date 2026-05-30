@@ -66,6 +66,9 @@ const doctorSchema = new mongoose.Schema({
     },
     
     // Security
+    isVerified: { type: Boolean, default: false },
+    otp: { type: String },
+    otpExpire: { type: Date },
     mustChangePassword: { type: Boolean, default: false },
     resetPasswordToken: String,
     resetPasswordExpire: Date

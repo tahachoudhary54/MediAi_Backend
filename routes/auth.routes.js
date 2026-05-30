@@ -1,11 +1,13 @@
 import express from 'express';
-import { registerPatient, registerDoctor, login, getMe, forgotPassword, resetPassword, changePassword, reverifyDoctor, updateProfile, updateAvatar } from '../controllers/auth.controller.js';
+import { registerPatient, registerDoctor, login, getMe, forgotPassword, resetPassword, changePassword, reverifyDoctor, updateProfile, updateAvatar, verifyOtp, resendOtp } from '../controllers/auth.controller.js';
 import upload from '../middleware/upload.middleware.js';
 import { protect } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 
 router.post('/register', registerPatient);
+router.post('/verify-otp', verifyOtp);
+router.post('/resend-otp', resendOtp);
 
 // Doctor registration might include file uploads
 router.post('/doctor/register', upload.fields([

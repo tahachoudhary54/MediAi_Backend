@@ -9,11 +9,15 @@ const transactionSchema = new mongoose.Schema({
     doctor: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Doctor',
-        required: true
+        required: false
     },
     appointment: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Appointment'
+    },
+    medicineOrder: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'MedicineOrder'
     },
     amount: {
         type: Number,
@@ -35,7 +39,7 @@ const transactionSchema = new mongoose.Schema({
     },
     transactionType: {
         type: String,
-        enum: ['consultation', 'lab_test', 'prescription', 'subscription'],
+        enum: ['consultation', 'lab_test', 'prescription', 'subscription', 'pharmacy'],
         default: 'consultation'
     },
     paymentDate: {

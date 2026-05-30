@@ -27,10 +27,11 @@ const sendEmail = async (options) => {
     }
 
     const message = {
-        from: `${process.env.FROM_NAME || 'MediAI Healthcare'} <${process.env.FROM_EMAIL || 'noreply@mediai.com'}>`,
+        from: `${process.env.FROM_NAME || 'MediAI Healthcare'} <${process.env.FROM_EMAIL || process.env.SMTP_USER || 'noreply@mediai.com'}>`,
         to: options.email,
         subject: options.subject,
         text: options.message,
+        ...(options.html && { html: options.html })
     };
 
     const info = await transporter.sendMail(message);

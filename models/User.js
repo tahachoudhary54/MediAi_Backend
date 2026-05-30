@@ -36,8 +36,10 @@ const userSchema = new mongoose.Schema({
     // Admin specific field
     adminAccessCode: { type: String, select: false },
 
-    // Account status & Security
     isActive: { type: Boolean, default: true },
+    isVerified: { type: Boolean, default: false },
+    otp: { type: String },
+    otpExpire: { type: Date },
     mustChangePassword: { type: Boolean, default: false },
     resetPasswordToken: String,
     resetPasswordExpire: Date

@@ -74,12 +74,28 @@ export const editUser = async (req, res) => {
             details: { email: user.email, updatedFields: Object.keys(updateData) }
         });
 
+        const userObj = user.toObject();
+        delete userObj.password;
+
         const io = req.app.get('io');
         if (io) {
-            io.to(`patient_${user._id.toString()}`).emit('userProfileUpdated', user);
+            io.to(`patient_${user._id.toString()}`).emit('userProfileUpdated', userObj);
         }
 
-        res.status(200).json({ success: true, data: user });
+        try {
+            await Notification.create({
+                recipient: user._id,
+                recipientModel: 'User',
+                title: 'Profile Updated',
+                message: 'Your profile details have been updated by an administrator.',
+                type: 'general',
+                route: '/patient/profile'
+            });
+        } catch (e) {
+            console.error('Failed to create notification', e);
+        }
+
+        res.status(200).json({ success: true, data: userObj });
     } catch (error) {
         console.error('editUser error:', error.message);
         res.status(500).json({ success: false, message: error.message });
@@ -222,6 +238,27 @@ export const verifyDoctor = async (req, res) => {
 export const editDoctor = async (req, res) => {
     try {
         const doctor = await Doctor.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: false }).select('-password');
+        
+        const io = req.app.get('io');
+        if (io && doctor) {
+            io.to(`doctor_${doctor._id.toString()}`).emit('userProfileUpdated', doctor.toObject ? doctor.toObject() : doctor);
+        }
+
+        try {
+            if (doctor) {
+                await Notification.create({
+                    recipient: doctor._id,
+                    recipientModel: 'Doctor',
+                    title: 'Profile Updated',
+                    message: 'Your profile details have been updated by an administrator.',
+                    type: 'general',
+                    route: '/doctor/settings'
+                });
+            }
+        } catch (e) {
+            console.error('Failed to create notification', e);
+        }
+
         res.status(200).json({ success: true, data: doctor });
     } catch (error) {
         console.error('editDoctor error:', error.message);
@@ -271,7 +308,7 @@ export const getAllReports = async (req, res) => {
 export const getAllEmergencies = async (req, res) => {
     try {
         const emergencies = await EmergencyCase.find()
-            .populate('patient', 'fullName email phone')
+            .populate('patient', 'fullName email phone emergencyContact')
             .sort({ createdAt: -1 });
         res.status(200).json({ success: true, data: emergencies });
     } catch (error) {
@@ -410,7 +447,7 @@ export const updateEmergencyStatus = async (req, res) => {
             req.params.id, 
             { status: req.body.status }, 
             { new: true }
-        ).populate('patient', 'fullName email');
+        ).populate('patient', 'fullName email phone emergencyContact');
 
         if (!emergency) return res.status(404).json({ success: false, message: 'Emergency case not found' });
 
@@ -436,7 +473,7 @@ export const archiveEmergency = async (req, res) => {
             req.params.id,
             { isArchived: true },
             { new: true }
-        ).populate('patient', 'fullName email');
+        ).populate('patient', 'fullName email phone emergencyContact');
 
         if (!emergency) return res.status(404).json({ success: false, message: 'Emergency case not found' });
 

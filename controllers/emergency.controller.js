@@ -37,7 +37,7 @@ export const createEmergencyCase = async (req, res, next) => {
         
         // Return full populated case
         const populatedEmergency = await EmergencyCase.findById(emergency._id)
-            .populate('patient', 'fullName phone')
+            .populate('patient', 'fullName phone emergencyContact')
             .populate('nearestDoctors.doctor', 'fullName specialization phone clinicAddress');
             
         // Mock nearby hospitals if needed (can be static list or based on logic)

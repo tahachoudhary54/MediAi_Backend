@@ -61,6 +61,21 @@ export const createAppointment = async (req, res, next) => {
             });
         }
         
+        // Check if doctor has daily break enabled and if the requested time falls within it
+        if (doc.dailyBreak && doc.dailyBreak.enabled) {
+            const requestedTime = time; // format "HH:mm"
+            const breakStart = doc.dailyBreak.startTime; // format "HH:mm"
+            const breakEnd = doc.dailyBreak.endTime; // format "HH:mm"
+            
+            // Basic string comparison works for HH:mm format
+            if (requestedTime >= breakStart && requestedTime < breakEnd) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Doctor is on break between ${breakStart} and ${breakEnd}. Please select another time.`
+                });
+            }
+        }
+        
         const appointment = await Appointment.create({
             patient: req.user._id,
             doctor,
