@@ -46,15 +46,53 @@ const io = new Server(server, {
 app.set('io', io);
 
 io.on('connection', (socket) => {
-    console.log(`[Socket] Doctor socket connected with socketId: ${socket.id}`);
+    console.log(`[Socket] Client connected with socketId: ${socket.id}`);
 
     socket.on('joinRoom', (room) => {
         socket.join(room);
         console.log(`[Socket] Client joined room: ${room}`);
     });
 
+    // WebRTC Signaling Events
+    socket.on('callUser', (data) => {
+        console.log(`[Socket] Call initiated from ${data.from} to room ${data.roomToCall}`);
+        socket.to(data.roomToCall).emit('callUser', {
+            signal: data.signalData,
+            from: data.from,
+            name: data.name,
+            isVideo: data.isVideo,
+            callerModel: data.callerModel,
+            callerId: data.callerId,
+            chatId: data.chatId
+        });
+    });
+
+    socket.on('answerCall', (data) => {
+        console.log(`[Socket] Call answered, sending to ${data.to} and ${data.callerSocketId || 'N/A'}`);
+        socket.to(data.to).emit('callAccepted', data.signal);
+        if (data.callerSocketId) {
+            socket.to(data.callerSocketId).emit('callAccepted', data.signal);
+        }
+    });
+
+    socket.on('rejectCall', (data) => {
+        console.log(`[Socket] Call rejected, notifying ${data.to}`);
+        socket.to(data.to).emit('callRejected');
+    });
+
+    socket.on('iceCandidate', (data) => {
+        socket.to(data.to).emit('iceCandidate', data.candidate);
+    });
+
+    socket.on('endCall', (data) => {
+        console.log(`[Socket] Call ended, notifying ${data.to}`);
+        socket.to(data.to).emit('callEnded');
+    });
+
     socket.on('disconnect', () => {
         console.log(`[Socket] Disconnected socketId: ${socket.id}`);
+        // Notify others in rooms that this user disconnected (optional, for handling abrupt drops)
+        // A full implementation might track which room the user is in and emit 'callEnded'
     });
 });
 

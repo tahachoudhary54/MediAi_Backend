@@ -74,6 +74,11 @@ export const editUser = async (req, res) => {
             details: { email: user.email, updatedFields: Object.keys(updateData) }
         });
 
+        const io = req.app.get('io');
+        if (io) {
+            io.to(`patient_${user._id.toString()}`).emit('userProfileUpdated', user);
+        }
+
         res.status(200).json({ success: true, data: user });
     } catch (error) {
         console.error('editUser error:', error.message);
