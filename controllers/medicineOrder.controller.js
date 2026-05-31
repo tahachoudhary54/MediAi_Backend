@@ -73,6 +73,13 @@ export const updateOrderStatus = async (req, res, next) => {
             return res.status(404).json({ success: false, message: 'Order not found' });
         }
 
+        // Emit real-time Socket event to patient
+        const io = req.app.get('io');
+        if (io) {
+            io.to(`patient_${order.patient._id.toString()}`).emit('orderStatusUpdated', order);
+            console.log(`[Socket] Emitted orderStatusUpdated to patient room: patient_${order.patient._id.toString()}`);
+        }
+
         res.status(200).json({ success: true, data: order });
     } catch (error) {
         next(error);
@@ -96,6 +103,14 @@ export const deleteOrder = async (req, res, next) => {
         }
 
         await order.deleteOne();
+
+        // Emit real-time Socket event to sync deletion
+        const io = req.app.get('io');
+        if (io) {
+            io.to('admin_room').emit('orderDeletedAdmin', order._id);
+            io.to(`patient_${order.patient.toString()}`).emit('orderDeletedPatient', order._id);
+            console.log(`[Socket] Emitted order deletion sync for order ID: ${order._id}`);
+        }
 
         res.status(200).json({ success: true, data: {} });
     } catch (error) {

@@ -216,82 +216,140 @@ export const getDoctorAppointments = async (req, res, next) => {
 // @access  Private
 export const updateAppointment = async (req, res, next) => {
     try {
-        let appointment = await Appointment.findById(req.params.id).populate('patient', 'fullName email');
+        let appointment = await Appointment.findById(req.params.id)
+            .populate('patient', 'fullName email')
+            .populate('doctor', 'fullName email');
         if (!appointment) return res.status(404).json({ success: false, message: 'Appointment not found' });
         
         const oldDate = appointment.date;
         const oldTime = appointment.time;
         const oldStatus = appointment.status;
 
-        appointment = await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }).populate('patient', 'fullName email');
+        // Determine transitions based on who is updating and what they are updating
+        let updatedData = { ...req.body };
 
-        // If doctor or admin changed date/time/status, send email to patient
-        if (req.user.role === 'doctor' || req.user.role === 'admin') {
-            const hasChanged = 
-                new Date(oldDate).getTime() !== new Date(appointment.date).getTime() || 
-                oldTime !== appointment.time || 
-                oldStatus !== appointment.status;
+        const isDateOrTimeChanged = 
+            (req.body.date && new Date(req.body.date).getTime() !== new Date(oldDate).getTime()) ||
+            (req.body.time && req.body.time !== oldTime);
 
-            if (hasChanged && appointment.patient && appointment.patient.email) {
-                const message = `Hello ${appointment.patient.fullName},\n\nYour appointment status or timing has been updated by the doctor.\n\nNew Details:\nDate: ${new Date(appointment.date).toLocaleDateString()}\nTime: ${appointment.time}\nStatus: ${appointment.status}\n\nPlease check your dashboard for details.\n\nMediAI Healthcare`;
-                
-                await sendEmail({
-                    email: appointment.patient.email,
-                    subject: 'MediAI Appointment Update',
-                    message
-                });
-
-                // Create in-app notification
-                await Notification.create({
-                    recipient: appointment.patient._id,
-                    recipientModel: 'User',
-                    title: appointment.status === 'cancelled' ? 'Appointment Cancelled' : 'Appointment Updated',
-                    message: appointment.status === 'cancelled' 
-                        ? `Your appointment with Dr. ${req.user.fullName} has been cancelled.` 
-                        : `Your appointment with Dr. ${req.user.fullName} has been updated.`,
-                    type: appointment.status === 'cancelled' ? 'appointment_cancel' : 'appointment_update',
-                    route: '/patient/appointments'
-                });
-
-                // Emit real-time socket events and create admin notifications if cancelled
-                if (appointment.status === 'cancelled') {
-                    const io = req.app.get('io');
-                    if (io) {
-                        console.log(`[Socket] Emitting appointmentCancelled to patient_${appointment.patient._id}`);
-                        io.to(`patient_${appointment.patient._id}`).emit("appointmentCancelled", {
-                            appointmentId: appointment._id,
-                            message: `Dr. ${req.user.fullName} has cancelled your appointment.`
-                        });
-                    }
-
-                    // Notify admins
-                    try {
-                        const admins = await User.find({ role: 'admin' });
-                        for (const admin of admins) {
-                            await Notification.create({
-                                recipient: admin._id,
-                                recipientModel: 'User',
-                                title: 'Appointment Cancelled by Doctor',
-                                message: `Dr. ${req.user.fullName} has cancelled the appointment for ${appointment.patient.fullName || 'Patient'}.`,
-                                type: 'appointment_cancel',
-                                route: '/admin/appointments'
-                            });
-                        }
-
-                        if (io) {
-                            console.log(`[Socket] Emitting appointmentCancelledAdmin to admin_room`);
-                            io.to('admin_room').emit("appointmentCancelledAdmin", {
-                                appointmentId: appointment._id,
-                                message: `Dr. ${req.user.fullName} has cancelled the appointment for ${appointment.patient.fullName || 'Patient'}.`
-                            });
-                        }
-                    } catch (adminErr) {
-                        console.error("Failed to notify admins of cancellation:", adminErr);
-                    }
-                }
+        if (isDateOrTimeChanged) {
+            if (req.user.role === 'doctor') {
+                updatedData.status = 'pending_reschedule_by_doctor';
+            } else if (req.user.role === 'patient') {
+                updatedData.status = 'pending_reschedule_by_patient';
             }
         }
-        
+
+        // Apply updates
+        appointment = await Appointment.findByIdAndUpdate(req.params.id, updatedData, { new: true, runValidators: true })
+            .populate('patient', 'fullName email')
+            .populate('doctor', 'fullName email');
+
+        const io = req.app.get('io');
+
+        // Notification and Socket triggering based on the new status
+        if (appointment.status === 'pending_reschedule_by_doctor') {
+            // Notify Patient
+            await Notification.create({
+                recipient: appointment.patient._id,
+                recipientModel: 'User',
+                title: 'Appointment Rescheduled by Doctor',
+                message: `Dr. ${appointment.doctor.fullName} suggested a new timing: ${new Date(appointment.date).toLocaleDateString()} at ${appointment.time}.`,
+                type: 'appointment_update',
+                route: '/patient/appointments'
+            });
+
+            if (appointment.patient.email) {
+                await sendEmail({
+                    email: appointment.patient.email,
+                    subject: 'MediAI Appointment Rescheduled by Doctor',
+                    message: `Hello ${appointment.patient.fullName},\n\nDr. ${appointment.doctor.fullName} suggested a new timing for your appointment:\nDate: ${new Date(appointment.date).toLocaleDateString()}\nTime: ${appointment.time}\n\nPlease visit your dashboard to accept the reschedule or suggest another slot.\n\nMediAI Healthcare`
+                });
+            }
+
+            if (io) {
+                io.to(`patient_${appointment.patient._id}`).emit('appointmentRescheduled', {
+                    appointmentId: appointment._id,
+                    message: `Dr. ${appointment.doctor.fullName} has suggested a new time.`
+                });
+            }
+        } else if (appointment.status === 'pending_reschedule_by_patient') {
+            // Notify Doctor
+            await Notification.create({
+                recipient: appointment.doctor._id,
+                recipientModel: 'Doctor',
+                title: 'Appointment Rescheduled by Patient',
+                message: `${appointment.patient.fullName} suggested a new timing: ${new Date(appointment.date).toLocaleDateString()} at ${appointment.time}.`,
+                type: 'appointment_update',
+                route: '/doctor/appointments'
+            });
+
+            if (appointment.doctor.email) {
+                await sendEmail({
+                    email: appointment.doctor.email,
+                    subject: 'MediAI Appointment Rescheduled by Patient',
+                    message: `Dear Dr. ${appointment.doctor.fullName},\n\nYour patient ${appointment.patient.fullName} has suggested a new timing for their appointment:\nDate: ${new Date(appointment.date).toLocaleDateString()}\nTime: ${appointment.time}\n\nPlease visit your dashboard to accept the reschedule or suggest another slot.\n\nMediAI Healthcare`
+                });
+            }
+
+            if (io) {
+                io.to(`doctor_${appointment.doctor._id}`).emit('appointmentRescheduled', {
+                    appointmentId: appointment._id,
+                    message: `${appointment.patient.fullName} has suggested a new time.`
+                });
+            }
+        } else if (appointment.status === 'approved_pending_payment') {
+            // Notify Patient
+            await Notification.create({
+                recipient: appointment.patient._id,
+                recipientModel: 'User',
+                title: 'Appointment Schedule Approved',
+                message: `Your appointment schedule with Dr. ${appointment.doctor.fullName} has been approved! Please pay now to secure your booking.`,
+                type: 'appointment_update',
+                route: '/patient/appointments'
+            });
+
+            if (appointment.patient.email) {
+                await sendEmail({
+                    email: appointment.patient.email,
+                    subject: 'MediAI Appointment Schedule Approved - Payment Pending',
+                    message: `Hello ${appointment.patient.fullName},\n\nYour appointment schedule with Dr. ${appointment.doctor.fullName} on ${new Date(appointment.date).toLocaleDateString()} at ${appointment.time} has been approved!\n\nPlease log in and complete the payment to finalize your booking.\n\nMediAI Healthcare`
+                });
+            }
+
+            if (io) {
+                io.to(`patient_${appointment.patient._id}`).emit('appointmentApproved', {
+                    appointmentId: appointment._id,
+                    message: `Dr. ${appointment.doctor.fullName} has approved the schedule. Please pay to finalize.`
+                });
+            }
+        } else if (appointment.status === 'cancelled') {
+            if (appointment.patient && appointment.patient.email) {
+                const message = `Hello ${appointment.patient.fullName},\n\nYour appointment with Dr. ${appointment.doctor?.fullName || 'Doctor'} has been cancelled.\n\nMediAI Healthcare`;
+                await sendEmail({
+                    email: appointment.patient.email,
+                    subject: 'MediAI Appointment Cancellation',
+                    message
+                });
+            }
+            
+            await Notification.create({
+                recipient: appointment.patient._id,
+                recipientModel: 'User',
+                title: 'Appointment Cancelled',
+                message: `Your appointment with Dr. ${appointment.doctor?.fullName || 'Doctor'} has been cancelled.`,
+                type: 'appointment_cancel',
+                route: '/patient/appointments'
+            });
+
+            if (io) {
+                io.to(`patient_${appointment.patient._id}`).emit("appointmentCancelled", {
+                    appointmentId: appointment._id,
+                    message: `Your appointment has been cancelled.`
+                });
+            }
+        }
+
         res.status(200).json({ success: true, data: appointment });
     } catch (error) {
         next(error);

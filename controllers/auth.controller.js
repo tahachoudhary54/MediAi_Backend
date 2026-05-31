@@ -172,6 +172,7 @@ export const registerDoctor = async (req, res, next) => {
 
         res.status(200).json({ success: true, message: 'OTP sent to email', requireOtp: true, verificationStatus: 'pending' });
     } catch (error) {
+        console.error('Error in registerDoctor:', error);
         next(error);
     }
 };
@@ -320,6 +321,7 @@ export const reverifyDoctor = async (req, res, next) => {
             verificationStatus: 'pending'
         });
     } catch (error) {
+        console.error('Error in reverifyDoctor:', error);
         next(error);
     }
 };
@@ -331,7 +333,7 @@ export const login = async (req, res, next) => {
     try {
         let { email, password, adminAccessCode, role: requestedRole } = req.body;
         
-        if (email) email = email.toLowerCase();
+        if (email) email = email.toLowerCase().trim();
 
         console.log(`[Login] Attempt for ${email} as ${requestedRole || 'unknown'}`);
 
@@ -347,12 +349,18 @@ export const login = async (req, res, next) => {
             user = await Doctor.findOne({ email }).select('+password');
             isDoctor = true;
             if (user) user.role = 'doctor'; // Ensure role is set correctly
-        } else if (requestedRole === 'admin' || requestedRole === 'patient') {
+        } else if (requestedRole === 'admin' || requestedRole === 'patient' || requestedRole === 'super_admin') {
             user = await User.findOne({ email }).select('+password +adminAccessCode');
             // Ensure the found user actually has the requested role (e.g. don't log in as patient if admin was requested)
             if (user && user.role !== requestedRole) {
-                console.log(`[Login] Role mismatch: Found ${user.role} but requested ${requestedRole}`);
-                user = null; 
+                // Auto-upgrade/fix role if an admin logs in on the super_admin tab or vice versa
+                if ((user.role === 'super_admin' && requestedRole === 'admin') || (user.role === 'admin' && requestedRole === 'super_admin')) {
+                    console.log(`[Login] Role auto-corrected from ${requestedRole} to ${user.role}`);
+                    // Accept it, don't nullify user
+                } else {
+                    console.log(`[Login] Role mismatch: Found ${user.role} but requested ${requestedRole}`);
+                    user = null; 
+                }
             }
         } else {
             // Fallback for cases where role is not provided
@@ -379,10 +387,10 @@ export const login = async (req, res, next) => {
             return res.status(401).json({ success: false, message: 'Invalid credentials' });
         }
 
-        // Check admin access code if role is admin
-        if (user.role === 'admin') {
-            if (adminAccessCode !== user.adminAccessCode) {
-                console.log('[Login] Admin access code mismatch');
+        // Check admin access code if role is admin or super_admin
+        if (user.role === 'admin' || user.role === 'super_admin') {
+            if (adminAccessCode?.trim() !== user.adminAccessCode) {
+                console.log(`[Login] ${user.role} access code mismatch`);
                 return res.status(401).json({ success: false, message: 'Invalid admin access code' });
             }
         }

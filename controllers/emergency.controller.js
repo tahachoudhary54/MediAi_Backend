@@ -4,6 +4,117 @@ import calculateDistance from '../utils/calculateDistance.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 
+// @desc    Create guest emergency SOS (NO LOGIN REQUIRED)
+// @route   POST /api/emergency/guest-sos
+// @access  Public
+export const createGuestEmergency = async (req, res, next) => {
+    try {
+        const { guestName, guestPhone, emergencyType, description, latitude, longitude, accuracy } = req.body;
+
+        // Validate required fields
+        if (!guestPhone || !latitude || !longitude) {
+            return res.status(400).json({
+                success: false,
+                message: 'Phone number and location are required for emergency SOS'
+            });
+        }
+
+        // Basic phone validation (at least 7 digits)
+        const phoneClean = guestPhone.replace(/[^0-9+]/g, '');
+        if (phoneClean.length < 7) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide a valid phone number'
+            });
+        }
+
+        // Basic location validation
+        if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid location coordinates'
+            });
+        }
+
+        // Find nearby approved doctors
+        const approvedDoctors = await Doctor.find({ verificationStatus: 'approved', accountStatus: 'active' });
+        const nearbyDoctors = approvedDoctors
+            .filter(doc => doc.location && doc.location.latitude && doc.location.longitude)
+            .map(doc => {
+                const distance = calculateDistance(latitude, longitude, doc.location.latitude, doc.location.longitude);
+                return { doctor: doc._id, distance };
+            })
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, 5);
+
+        const emergency = await EmergencyCase.create({
+            source: 'guest',
+            guestName: guestName || 'Anonymous',
+            guestPhone: phoneClean,
+            emergencyType: emergencyType || 'other',
+            description: description || '',
+            symptoms: description || `Guest SOS - ${emergencyType || 'Emergency'}`,
+            riskLevel: 'Critical',
+            latitude,
+            longitude,
+            accuracy: accuracy || 0,
+            status: 'pending',
+            nearestDoctors: nearbyDoctors
+        });
+
+        const populatedEmergency = await EmergencyCase.findById(emergency._id)
+            .populate('nearestDoctors.doctor', 'fullName specialization phone clinicAddress');
+
+        // Emit Socket.IO alert to super_admin AND admin rooms
+        const io = req.app.get('io');
+        if (io) {
+            io.to('super_admin').emit('emergency_alert', {
+                ...populatedEmergency.toObject(),
+                isGuestSOS: true
+            });
+            io.to('admin').emit('emergency_alert', {
+                ...populatedEmergency.toObject(),
+                isGuestSOS: true
+            });
+        }
+
+        // Notify all super admins
+        const superAdmins = await User.find({ role: 'super_admin' });
+        for (const sa of superAdmins) {
+            await Notification.create({
+                recipient: sa._id,
+                recipientModel: 'User',
+                title: '🚨 GUEST EMERGENCY SOS!',
+                message: `Guest ${guestName || 'Anonymous'} (${phoneClean}) triggered an emergency SOS. Type: ${emergencyType || 'Unknown'}`,
+                type: 'emergency',
+                route: '/super-admin/emergency-control'
+            });
+        }
+
+        // Also notify admins
+        const admins = await User.find({ role: 'admin' });
+        for (const admin of admins) {
+            await Notification.create({
+                recipient: admin._id,
+                recipientModel: 'User',
+                title: '🚨 GUEST EMERGENCY SOS!',
+                message: `Guest ${guestName || 'Anonymous'} (${phoneClean}) triggered an emergency SOS.`,
+                type: 'emergency',
+                route: '/admin/emergency-monitoring'
+            });
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Emergency SOS has been sent! Help is on the way.',
+            data: { id: emergency._id, status: emergency.status }
+        });
+    } catch (error) {
+        console.error('createGuestEmergency error:', error);
+        next(error);
+    }
+};
+
 // @desc    Create emergency case & find nearby doctors
 // @route   POST /api/emergency
 // @access  Private (Patient)

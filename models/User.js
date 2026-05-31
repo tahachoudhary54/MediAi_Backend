@@ -5,9 +5,13 @@ const userSchema = new mongoose.Schema({
     fullName: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    role: { type: String, enum: ['patient', 'admin'], default: 'patient' },
+    role: { type: String, enum: ['patient', 'admin', 'super_admin'], default: 'patient' },
     phone: { type: String, default: "" },
     avatar: { type: String, default: "" },
+
+    // Super Admin management fields (for admin accounts)
+    assignedRegion: { type: String, default: "" },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
     // Patient specific fields
     age: { type: Number },

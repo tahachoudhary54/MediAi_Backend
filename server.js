@@ -25,6 +25,7 @@ import vitalsRoutes from './routes/vitals.routes.js';
 import activityRoutes from './routes/activity.routes.js';
 import medicineOrderRoutes from './routes/medicineOrder.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
+import superAdminRoutes from './routes/superAdmin.routes.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -134,6 +135,7 @@ app.use('/api/patient/vitals', vitalsRoutes);
 app.use('/api/patient/activity', activityRoutes);
 app.use('/api/medicine-orders', medicineOrderRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/super-admin', superAdminRoutes);
 // Root route for testing deployment
 app.get('/', (req, res) => {
     res.status(200).json({ message: 'Medi AI Backend is running successfully!' });
