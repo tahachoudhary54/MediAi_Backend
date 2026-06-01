@@ -1,4 +1,5 @@
 import aiClient from '../utils/aiClient.js';
+import OpenAI from 'openai';
 import Doctor from '../models/Doctor.js';
 import HealthVitals from '../models/HealthVitals.js';
 import { computeDoctorStatus } from '../utils/statusHelper.js';
@@ -145,8 +146,20 @@ export const symptomCheck = async (req, res, next) => {
         ];
 
 
-        const response = await aiClient.chat.completions.create({
-            model: process.env.AI_MODEL || 'grok-beta',
+        let modelToUse = process.env.AI_MODEL || 'grok-beta';
+        let clientToUse = aiClient;
+
+        if (imageUrl) {
+            // Groq vision models are decommissioned. Force switch to xAI's vision model.
+            modelToUse = 'grok-2-vision-1212';
+            clientToUse = new OpenAI({
+                apiKey: process.env.XAI_API_KEY,
+                baseURL: process.env.XAI_BASE_URL || 'https://api.x.ai/v1',
+            });
+        }
+
+        const response = await clientToUse.chat.completions.create({
+            model: modelToUse,
             messages,
             response_format: { type: 'json_object' }
         });
@@ -188,10 +201,20 @@ export const symptomCheck = async (req, res, next) => {
         res.status(200).json({ success: true, data: aiResponse });
     } catch (error) {
         console.error('AI Symptom Check Error:', error.response?.data || error.message || error);
-        res.status(500).json({ 
+        
+        let errorMessage = "AI request failed. Please try again.";
+        const apiError = error.response?.data?.error || error.response?.data || error.message;
+
+        if (error.response?.status === 403 && typeof apiError === 'string' && apiError.toLowerCase().includes('credits')) {
+            errorMessage = "Your xAI API Key is completely out of credits. Please add credits to your xAI account to use Image Analysis.";
+        } else if (error.response?.status === 400 && typeof apiError === 'string' && apiError.toLowerCase().includes('decommissioned')) {
+             errorMessage = "The Groq AI Vision model has been permanently decommissioned by the provider.";
+        }
+
+        res.status(error.response?.status || 500).json({ 
             success: false, 
-            message: "AI request failed",
-            error: error.response?.data || error.message
+            message: errorMessage,
+            error: apiError
         });
     }
 };
