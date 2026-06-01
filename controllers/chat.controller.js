@@ -16,6 +16,11 @@ export const createChat = async (req, res, next) => {
         const appointment = await Appointment.findById(appointmentId);
         if (!appointment) return res.status(404).json({ success: false, message: 'Appointment not found' });
 
+        // Ensure patient has paid for chat consultation
+        if (!req.user.consultationAccess?.chat) {
+            return res.status(403).json({ success: false, message: 'Please pay for chat consultation first' });
+        }
+
         // Check if chat already exists
         let chat = await Chat.findOne({ appointment: appointmentId });
         if (chat) {
@@ -34,6 +39,8 @@ export const createChat = async (req, res, next) => {
         next(error);
     }
 };
+
+
 
 // @desc    Send message
 // @route   POST /api/chats/:id/messages
@@ -293,8 +300,9 @@ export const endConsultation = async (req, res, next) => {
 // @access  Private (Patient)
 export const requestConsultation = async (req, res, next) => {
     try {
-        const { doctorId, resume } = req.body;
-        console.log(`[Chat Request] Patient clicked Start Chat: Patient ${req.user._id} with Doctor ${doctorId}, resume: ${resume}`);
+        const { doctorId, resume, mode, features } = req.body;
+        const requestedFeatures = features || (mode ? [mode] : ['chat']);
+        console.log(`[Chat Request] Patient clicked Start Chat: Patient ${req.user._id} with Doctor ${doctorId}, resume: ${resume}, features: ${requestedFeatures}`);
 
         // If resuming, check for an existing active chat first
         if (resume) {
@@ -312,11 +320,9 @@ export const requestConsultation = async (req, res, next) => {
         // Close/end any stale active or requested chat sessions between this patient-doctor pair
         console.log(`[Chat Request] Ending any stale chats between patient ${req.user._id} and doctor ${doctorId}`);
         await Chat.updateMany(
-            { patient: req.user._id, doctor: doctorId, status: { $in: ['active', 'requested', 'doctor-requested'] } },
+            { patient: req.user._id, doctor: doctorId, status: { $in: ['active', 'requested', 'doctor-requested', 'accepted'] } },
             { $set: { status: 'ended' } }
         );
-
-
 
         // Create a fresh 'requested' pending chat request
         console.log(`[Chat Request] Creating a fresh pending requested chat session.`);
@@ -324,6 +330,8 @@ export const requestConsultation = async (req, res, next) => {
             patient: req.user._id,
             doctor: doctorId,
             status: 'requested',
+            features: requestedFeatures,
+            paymentStatus: 'pending',
             messages: []
         });
 
@@ -374,6 +382,7 @@ export const respondToConsultation = async (req, res, next) => {
             });
 
             io.to(`chat_${chat._id}`).emit('consultationResponded', chat);
+            io.to(`patient_${chat.patient}`).emit('consultationResponded', chat);
         }
 
         // If the doctor accepts the chat, automatically transition any other orphaned 'requested' chats for this patient-doctor pair to 'ended'

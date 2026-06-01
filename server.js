@@ -26,6 +26,8 @@ import activityRoutes from './routes/activity.routes.js';
 import medicineOrderRoutes from './routes/medicineOrder.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import superAdminRoutes from './routes/superAdmin.routes.js';
+import medicineStockRoutes from './routes/medicineStock.routes.js';
+import ambulanceRoutes from './routes/ambulance.routes.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -136,6 +138,8 @@ app.use('/api/patient/activity', activityRoutes);
 app.use('/api/medicine-orders', medicineOrderRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/super-admin', superAdminRoutes);
+app.use('/api/medicine-stock', medicineStockRoutes);
+app.use('/api/ambulances', ambulanceRoutes);
 // Root route for testing deployment
 app.get('/', (req, res) => {
     res.status(200).json({ message: 'Medi AI Backend is running successfully!' });

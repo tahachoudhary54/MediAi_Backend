@@ -37,6 +37,7 @@ const doctorSchema = new mongoose.Schema({
         latitude: { type: Number },
         longitude: { type: Number }
     },
+    region: { type: String, default: 'Global' },
     verificationStatus: {
         type: String,
         enum: ['pending', 'approved', 'rejected'],

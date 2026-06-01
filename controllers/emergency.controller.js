@@ -12,10 +12,10 @@ export const createGuestEmergency = async (req, res, next) => {
         const { guestName, guestPhone, emergencyType, description, latitude, longitude, accuracy } = req.body;
 
         // Validate required fields
-        if (!guestPhone || !latitude || !longitude) {
+        if (!guestName || !guestPhone || !latitude || !longitude) {
             return res.status(400).json({
                 success: false,
-                message: 'Phone number and location are required for emergency SOS'
+                message: 'Full name, phone number, and location are required for emergency SOS'
             });
         }
 
@@ -65,14 +65,10 @@ export const createGuestEmergency = async (req, res, next) => {
         const populatedEmergency = await EmergencyCase.findById(emergency._id)
             .populate('nearestDoctors.doctor', 'fullName specialization phone clinicAddress');
 
-        // Emit Socket.IO alert to super_admin AND admin rooms
+        // Emit Socket.IO alert to super_admin
         const io = req.app.get('io');
         if (io) {
             io.to('super_admin').emit('emergency_alert', {
-                ...populatedEmergency.toObject(),
-                isGuestSOS: true
-            });
-            io.to('admin').emit('emergency_alert', {
                 ...populatedEmergency.toObject(),
                 isGuestSOS: true
             });
@@ -91,18 +87,6 @@ export const createGuestEmergency = async (req, res, next) => {
             });
         }
 
-        // Also notify admins
-        const admins = await User.find({ role: 'admin' });
-        for (const admin of admins) {
-            await Notification.create({
-                recipient: admin._id,
-                recipientModel: 'User',
-                title: '🚨 GUEST EMERGENCY SOS!',
-                message: `Guest ${guestName || 'Anonymous'} (${phoneClean}) triggered an emergency SOS.`,
-                type: 'emergency',
-                route: '/admin/emergency-monitoring'
-            });
-        }
 
         res.status(201).json({
             success: true,

@@ -1,8 +1,10 @@
 import mongoose from 'mongoose';
 
 const orderItemSchema = new mongoose.Schema({
+    medicineId: { type: mongoose.Schema.Types.ObjectId, ref: 'MedicineStock' },
     medicineName: { type: String, required: true },
     quantity: { type: Number, required: true, min: 1 },
+    price: { type: Number, default: 0 }
 });
 
 const medicineOrderSchema = new mongoose.Schema({

@@ -3,6 +3,7 @@ import Doctor from '../models/Doctor.js';
 import Appointment from '../models/Appointment.js';
 import Report from '../models/Report.js';
 import EmergencyCase from '../models/EmergencyCase.js';
+import Ambulance from '../models/Ambulance.js';
 import Transaction from '../models/Transaction.js';
 import AuditLog from '../models/AuditLog.js';
 import SupportTicket from '../models/SupportTicket.js';
@@ -247,6 +248,51 @@ export const deleteAdmin = async (req, res) => {
     }
 };
 
+export const getAdminStats = async (req, res) => {
+    try {
+        const admin = await User.findById(req.params.id);
+        if (!admin || admin.role !== 'admin') {
+            return res.status(404).json({ success: false, message: 'Admin not found' });
+        }
+
+        let doctorQuery = {};
+        let patientQuery = { role: 'patient' };
+        let ambulanceQuery = {};
+
+        // If assignedRegion is provided and not empty/Global, filter by it
+        if (admin.assignedRegion && admin.assignedRegion.trim() !== '' && admin.assignedRegion.toLowerCase() !== 'global') {
+            doctorQuery.region = admin.assignedRegion;
+            patientQuery.region = admin.assignedRegion;
+            ambulanceQuery.region = admin.assignedRegion;
+        }
+
+        const totalDoctors = await Doctor.countDocuments(doctorQuery);
+        const totalPatients = await User.countDocuments(patientQuery);
+        const totalAmbulances = await Ambulance.countDocuments(ambulanceQuery);
+
+        const doctorsList = await Doctor.find(doctorQuery).select('fullName specialization -_id');
+        const patientsList = await User.find(patientQuery).select('fullName email -_id');
+        const ambulancesList = await Ambulance.find(ambulanceQuery).select('numberPlate driverName phoneNumber drivingLicense -_id');
+
+        res.status(200).json({
+            success: true,
+            data: {
+                adminName: admin.fullName,
+                region: admin.assignedRegion || 'Global',
+                totalDoctors,
+                totalPatients,
+                totalAmbulances,
+                doctors: doctorsList,
+                patients: patientsList,
+                ambulances: ambulancesList
+            }
+        });
+    } catch (error) {
+        console.error('getAdminStats error:', error.message);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 // ==========================================
 // EMERGENCY CONTROL CENTER
 // ==========================================
@@ -372,6 +418,36 @@ export const updateEmergencyStatusSA = async (req, res) => {
         res.status(200).json({ success: true, data: emergency });
     } catch (error) {
         console.error('updateEmergencyStatusSA error:', error.message);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const deleteEmergency = async (req, res) => {
+    try {
+        const emergency = await EmergencyCase.findById(req.params.id);
+
+        if (!emergency) {
+            return res.status(404).json({ success: false, message: 'Emergency case not found' });
+        }
+
+        await EmergencyCase.findByIdAndDelete(req.params.id);
+
+        await createAuditLog({
+            action: 'EMERGENCY_DELETED',
+            req,
+            target: 'EmergencyCase',
+            targetId: emergency._id,
+            details: {
+                source: emergency.source,
+                guestName: emergency.guestName,
+                guestPhone: emergency.guestPhone,
+                status: emergency.status
+            }
+        });
+
+        res.status(200).json({ success: true, data: {} });
+    } catch (error) {
+        console.error('deleteEmergency error:', error.message);
         res.status(500).json({ success: false, message: error.message });
     }
 };

@@ -307,7 +307,7 @@ export const getAllReports = async (req, res) => {
 // --- Emergency Monitoring ---
 export const getAllEmergencies = async (req, res) => {
     try {
-        const emergencies = await EmergencyCase.find()
+        const emergencies = await EmergencyCase.find({ source: { $ne: 'guest' } })
             .populate('patient', 'fullName email phone emergencyContact')
             .sort({ createdAt: -1 });
         res.status(200).json({ success: true, data: emergencies });
@@ -347,6 +347,17 @@ export const updateTransactionStatus = async (req, res) => {
         res.status(200).json({ success: true, data: transaction });
     } catch (error) {
         console.error('updateTransactionStatus error:', error.message);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const deleteTransaction = async (req, res) => {
+    try {
+        const transaction = await Transaction.findByIdAndDelete(req.params.id);
+        if (!transaction) return res.status(404).json({ success: false, message: 'Transaction not found' });
+        res.status(200).json({ success: true, message: 'Transaction deleted successfully' });
+    } catch (error) {
+        console.error('deleteTransaction error:', error.message);
         res.status(500).json({ success: false, message: error.message });
     }
 };

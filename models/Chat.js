@@ -38,9 +38,23 @@ const chatSchema = new mongoose.Schema({
         required: true
     },
     messages: [messageSchema],
+    paymentStatus: {
+        type: String,
+        enum: ['pending', 'paid'],
+        default: 'pending'
+    },
+    amount: {
+        type: Number,
+        default: 0
+    },
+    features: {
+        type: [String],
+        enum: ['chat', 'voice', 'video'],
+        default: ['chat']
+    },
     status: {
         type: String,
-        enum: ['requested', 'active', 'ended', 'rescheduled'],
+        enum: ['requested', 'accepted', 'doctor-requested', 'active', 'ended', 'rescheduled', 'declined'],
         default: 'requested'
     },
     scheduledTime: {

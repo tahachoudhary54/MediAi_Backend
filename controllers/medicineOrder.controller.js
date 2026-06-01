@@ -1,4 +1,5 @@
 import MedicineOrder from '../models/MedicineOrder.js';
+import MedicineStock from '../models/MedicineStock.js';
 
 // @desc    Create new order
 // @route   POST /api/medicine-orders
@@ -11,11 +12,61 @@ export const createOrder = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'No items in order' });
         }
 
+        let totalAmount = 0;
+        const processedItems = [];
+
+        // Verify stock and calculate total amount
+        for (const item of items) {
+            if (item.medicineId) {
+                const stock = await MedicineStock.findById(item.medicineId);
+                if (!stock) {
+                    return res.status(404).json({ success: false, message: `Medicine not found: ${item.medicineName}` });
+                }
+                if (stock.quantity < item.quantity) {
+                    return res.status(400).json({ success: false, message: `Insufficient stock for ${item.medicineName}. Only ${stock.quantity} available.` });
+                }
+                const discount = stock.discount || 0;
+                const discountedPrice = Math.round(stock.price * (1 - discount / 100));
+                
+                processedItems.push({
+                    medicineId: stock._id,
+                    medicineName: stock.name,
+                    quantity: item.quantity,
+                    price: discountedPrice
+                });
+                totalAmount += (discountedPrice * item.quantity);
+            } else {
+                // Backward compatibility for items without medicineId
+                processedItems.push({
+                    medicineName: item.medicineName,
+                    quantity: item.quantity,
+                    price: 0
+                });
+            }
+        }
+
+        // Deduct stock
+        const io = req.app.get('io');
+        for (const pItem of processedItems) {
+            if (pItem.medicineId) {
+                const updatedStock = await MedicineStock.findByIdAndUpdate(
+                    pItem.medicineId,
+                    { $inc: { quantity: -pItem.quantity } },
+                    { new: true }
+                );
+                if (io) {
+                    io.to('admin_room').emit('medicine_updated', updatedStock);
+                    io.emit('medicineStockUpdated');
+                }
+            }
+        }
+
         const order = await MedicineOrder.create({
             patient: req.user._id,
-            items,
+            items: processedItems,
             deliveryAddress,
-            prescriptionUrl
+            prescriptionUrl,
+            totalAmount
         });
 
         res.status(201).json({ success: true, data: order });
@@ -102,10 +153,27 @@ export const deleteOrder = async (req, res, next) => {
             return res.status(403).json({ success: false, message: 'Not authorized to delete this order' });
         }
 
+        // Refund stock if applicable
+        const io = req.app.get('io');
+        if (order.status !== 'delivered' && order.status !== 'cancelled') {
+            for (const item of order.items) {
+                if (item.medicineId) {
+                    const updatedStock = await MedicineStock.findByIdAndUpdate(
+                        item.medicineId,
+                        { $inc: { quantity: item.quantity } },
+                        { new: true }
+                    );
+                    if (io) {
+                        io.to('admin_room').emit('medicine_updated', updatedStock);
+                        io.emit('medicineStockUpdated');
+                    }
+                }
+            }
+        }
+
         await order.deleteOne();
 
         // Emit real-time Socket event to sync deletion
-        const io = req.app.get('io');
         if (io) {
             io.to('admin_room').emit('orderDeletedAdmin', order._id);
             io.to(`patient_${order.patient.toString()}`).emit('orderDeletedPatient', order._id);

@@ -3,7 +3,7 @@ import {
     getAllUsers, addUser, editUser, deleteUser, toggleUserStatus,
     getAllDoctors, getPendingDoctors, verifyDoctor, editDoctor, deleteDoctor,
     getAllAppointments, getAllReports, getAllEmergencies, updateEmergencyStatus, archiveEmergency, getDashboardStats,
-    getAllTransactions, addTransaction, updateTransactionStatus, getAllAuditLogs
+    getAllTransactions, addTransaction, updateTransactionStatus, deleteTransaction, getAllAuditLogs
 } from '../controllers/admin.controller.js';
 import { 
     getAllTickets, updateTicketStatus, deleteTicketAdmin 
@@ -48,6 +48,7 @@ router.route('/transactions')
     .get(getAllTransactions)
     .post(addTransaction);
 router.patch('/transactions/:id/status', updateTransactionStatus);
+router.delete('/transactions/:id', deleteTransaction);
 
 // Audit Logs
 router.get('/audit-logs', getAllAuditLogs);

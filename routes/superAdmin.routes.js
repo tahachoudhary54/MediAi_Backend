@@ -2,10 +2,11 @@ import express from 'express';
 import {
     getDashboardStats,
     getAllAdmins, createAdmin, updateAdmin, suspendAdmin, deleteAdmin,
-    getAllEmergencies, getEmergencyById, assignEmergency, updateEmergencyStatusSA,
+    getAllEmergencies, getEmergencyById, assignEmergency, updateEmergencyStatusSA, deleteEmergency,
     getAllPlatformUsers, getAllDoctors, getAllAppointments, getAllSupportTickets, getAllAuditLogs,
     getAnalytics,
-    getPlatformSettings, updatePlatformSettings
+    getPlatformSettings, updatePlatformSettings,
+    getAdminStats
 } from '../controllers/superAdmin.controller.js';
 import { protect } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
@@ -27,12 +28,14 @@ router.route('/admins/:id')
     .put(updateAdmin)
     .delete(deleteAdmin);
 router.patch('/admins/:id/suspend', suspendAdmin);
+router.get('/admins/:id/stats', getAdminStats);
 
 // Emergency Control Center
 router.get('/emergencies', getAllEmergencies);
 router.get('/emergencies/:id', getEmergencyById);
 router.patch('/emergencies/:id/assign', assignEmergency);
 router.patch('/emergencies/:id/status', updateEmergencyStatusSA);
+router.delete('/emergencies/:id', deleteEmergency);
 
 // Platform-wide Read Access
 router.get('/users', getAllPlatformUsers);

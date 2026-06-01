@@ -32,7 +32,16 @@ const userSchema = new mongoose.Schema({
         latitude: { type: Number },
         longitude: { type: Number }
     },
+    // Consultation access flags
+    consultationAccess: {
+        chat: { type: Boolean, default: false },
+        voice: { type: Boolean, default: false },
+        video: { type: Boolean, default: false }
+    },
     emergencyLocationEnabled: { type: Boolean, default: false },
+
+    // Region assignment
+    region: { type: String, default: 'Global' },
 
     // Wearable Sync Source
     wearableSource: { type: String, default: "" },
