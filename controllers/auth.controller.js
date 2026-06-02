@@ -5,6 +5,7 @@ import { computeDoctorStatus } from '../utils/statusHelper.js';
 import generateToken from '../utils/generateToken.js';
 import crypto from 'crypto';
 import sendEmail from '../utils/sendEmail.js';
+import Notification from '../models/Notification.js';
 
 // Helper to generate OTP
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
@@ -121,8 +122,10 @@ export const registerDoctor = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Email already registered' });
         }
 
-        const otp = generateOtp();
-        const otpExpire = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+        // No OTP is generated here anymore, it's sent upon admin approval
+
+        console.log('[RegisterDoctor] req.body:', req.body);
+        console.log('[RegisterDoctor] req.files:', req.files);
 
         let degreeCertificate = req.files?.['degreeCertificate']?.[0]?.filename || '';
         let governmentId = req.files?.['governmentId']?.[0]?.filename || '';
@@ -134,43 +137,32 @@ export const registerDoctor = async (req, res, next) => {
             if (doctorExists.isVerified) {
                 return res.status(400).json({ success: false, message: 'Email already registered and verified' });
             }
-            doctorExists.fullName = fullName;
-            doctorExists.password = password;
-            doctorExists.specialization = specialization;
-            doctorExists.licenseNumber = licenseNumber;
-            doctorExists.yearsOfExperience = yearsOfExperience;
-            doctorExists.hospitalName = hospitalName;
-            doctorExists.clinicAddress = clinicAddress;
-            doctorExists.phone = phone;
-            doctorExists.location = location;
+            if (fullName) doctorExists.fullName = fullName;
+            if (password) doctorExists.password = password;
+            if (specialization) doctorExists.specialization = specialization;
+            if (licenseNumber) doctorExists.licenseNumber = licenseNumber;
+            if (yearsOfExperience) doctorExists.yearsOfExperience = yearsOfExperience;
+            if (hospitalName) doctorExists.hospitalName = hospitalName;
+            if (clinicAddress) doctorExists.clinicAddress = clinicAddress;
+            if (phone) doctorExists.phone = phone;
+            if (location) doctorExists.location = location;
             if (degreeCertificate) doctorExists.degreeCertificate = degreeCertificate;
             if (governmentId) doctorExists.governmentId = governmentId;
             if (medicalLicenseProof) doctorExists.medicalLicenseProof = medicalLicenseProof;
             if (avatar) doctorExists.avatar = avatar;
-            doctorExists.otp = otp;
-            doctorExists.otpExpire = otpExpire;
+            doctorExists.otp = undefined;
+            doctorExists.otpExpire = undefined;
             await doctorExists.save();
             doctor = doctorExists;
         } else {
             doctor = await Doctor.create({
                 fullName, email, password, role: 'doctor', specialization, licenseNumber, yearsOfExperience, hospitalName, clinicAddress, phone, location,
                 degreeCertificate, governmentId, medicalLicenseProof, avatar, verificationStatus: 'pending',
-                otp, otpExpire, isVerified: false
+                isVerified: false
             });
         }
 
-        try {
-            await sendEmail({
-                email: doctor.email,
-                subject: 'MediAI - Verify Your Email',
-                message: `Hello,\n\nWe received a request to verify your email address. Your verification code is: ${otp}\n\nThis code will expire in 10 minutes. If you did not request this, you can safely ignore this email.\n\nBest regards,\nThe MediAI Team`,
-                html: getOtpTemplate(otp)
-            });
-        } catch (error) {
-            console.error('Email sending failed', error);
-        }
-
-        res.status(200).json({ success: true, message: 'OTP sent to email', requireOtp: true, verificationStatus: 'pending' });
+        res.status(200).json({ success: true, message: 'Registration submitted for admin approval', requireOtp: false, verificationStatus: 'pending' });
     } catch (error) {
         console.error('Error in registerDoctor:', error);
         next(error);
@@ -184,44 +176,76 @@ export const verifyOtp = async (req, res, next) => {
     try {
         let { email, otp, role } = req.body;
         if (email) email = email.toLowerCase();
+        // Default role to 'doctor' if not provided
+        if (!role) role = 'doctor';
+        console.log('verifyOtp request body:', { email, otp, role });
 
         if (!email || !otp) {
             return res.status(400).json({ success: false, message: 'Please provide email and OTP' });
         }
 
-        let user;
+        // Attempt to locate the user in Doctor collection first if role is doctor or not specified
+        let user = null;
         let isDoctor = false;
-
         if (role === 'doctor') {
             user = await Doctor.findOne({ email });
             isDoctor = true;
         } else {
             user = await User.findOne({ email });
         }
-
+        // Fallback: if not found, try the other collection
+        if (!user) {
+            if (!isDoctor) {
+                // maybe a doctor without role hint
+                user = await Doctor.findOne({ email });
+                if (user) isDoctor = true;
+            } else {
+                user = await User.findOne({ email });
+                // role may be patient; keep isDoctor false
+            }
+        }
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
         }
 
+        // Ensure OTP is still pending verification
         if (user.isVerified) {
             return res.status(400).json({ success: false, message: 'User is already verified' });
         }
 
-        if (user.otp !== otp) {
+        if (String(user.otp) !== String(otp)) {
             return res.status(400).json({ success: false, message: 'Invalid OTP' });
         }
-
         if (user.otpExpire < new Date()) {
-            return res.status(400).json({ success: false, message: 'OTP has expired. Please register again.' });
+            return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' });
         }
 
+        // Mark as verified and clear OTP fields
         user.isVerified = true;
         user.otp = undefined;
         user.otpExpire = undefined;
+        // For doctors, ensure account status is active after verification
+        if (isDoctor && user.accountStatus !== 'active') {
+            user.accountStatus = 'active';
+        }
         await user.save();
 
+        // Notify admins that a doctor has completed verification
+        if (isDoctor) {
+            const admins = await User.find({ role: 'admin' });
+            const notifPromises = admins.map(admin =>
+                Notification.create({
+                    recipient: admin._id,
+                    recipientModel: 'User',
+                    title: 'Doctor Verified',
+                    message: `Doctor ${user.fullName} has completed verification.`,
+                    type: 'general',
+                    route: '/admin/doctors'
+                })
+            );
+            await Promise.all(notifPromises);
+        }
         sendTokenResponse(user, 200, res, isDoctor);
-
     } catch (error) {
         next(error);
     }
@@ -404,7 +428,14 @@ export const login = async (req, res, next) => {
         
         if (user.isVerified === false && user.role !== 'admin') {
             console.log('[Login] Account not verified');
-            return res.status(401).json({ success: false, message: 'Please verify your email to log in' });
+            // Check if it's an approved doctor (or pending)
+            const isApproved = isDoctor && user.verificationStatus === 'approved';
+            
+            return res.status(401).json({ 
+                success: false, 
+                message: isApproved ? 'Your account is approved! Please verify your email with the OTP sent to you.' : 'Please verify your email to log in',
+                requireOtp: isApproved 
+            });
         }
 
         console.log(`[Login] Success: ${user.email} logged in as ${user.role}`);

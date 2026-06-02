@@ -3,7 +3,7 @@ export const errorHandler = (err, req, res, next) => {
     error.message = err.message;
 
     // Log to console for dev
-    console.error(err);
+    console.error('Error in middleware:', err.name, err.message, err);
 
     // Mongoose bad ObjectId
     if (err.name === 'CastError') {

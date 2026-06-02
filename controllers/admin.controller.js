@@ -5,6 +5,7 @@ import Report from '../models/Report.js';
 import EmergencyCase from '../models/EmergencyCase.js';
 import sendEmail from '../utils/sendEmail.js';
 import Notification from '../models/Notification.js';
+import { generateOTP, getOtpExpiry } from '../utils/otpHelper.js';
 import Transaction from '../models/Transaction.js';
 import AuditLog from '../models/AuditLog.js';
 import { createAuditLog } from '../utils/auditLogger.js';
@@ -204,11 +205,24 @@ export const verifyDoctor = async (req, res) => {
 
         console.log('Doctor verification status updated to:', status);
 
+        // If approved, generate OTP and send to doctor
+        if (status === 'approved') {
+          const otp = generateOTP();
+          const otpExpire = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiry
+          doctor.otp = otp;
+          doctor.otpExpire = otpExpire;
+          await doctor.save();
+        }
+
         // Send email notification (non-blocking)
         try {
             if (status === 'approved') {
                 const approvalMessage = `Dear Dr. ${doctor.fullName},\n\nCongratulations! Your account has been approved.\n\nLogin at: ${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/login?role=doctor\n\nBest regards,\nMediAI Team`;
-                await sendEmail({ email: doctor.email, subject: 'MediAI - Account Approved! 🎉', message: approvalMessage });
+                await sendEmail({
+            email: doctor.email,
+            subject: 'MediAI - Account Approved! 🎉',
+            message: `${approvalMessage}\n\nYour verification OTP is: ${doctor.otp}\nIt will expire in 5 minutes.`
+          });
             } else {
                 const rejectionMessage = `Dear Dr. ${doctor.fullName},\n\nYour account verification was rejected.\n\nReason: ${rejectionReason || 'Not specified'}\n\nBest regards,\nMediAI Team`;
                 await sendEmail({ email: doctor.email, subject: 'MediAI - Account Verification Update', message: rejectionMessage });
