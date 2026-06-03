@@ -297,28 +297,29 @@ export const requestConsultation = async (req, res, next) => {
             { $set: { status: 'ended' } }
         );
 
-        // Guard: Ensure patient has an active appointment with this doctor before allowing a new consultation request
+        // Check if patient has an active appointment with this doctor (optional for spontaneous chats)
         const activeAppointment = await Appointment.findOne({
             patient: req.user._id,
             doctor: doctorId,
             status: { $in: ['pending', 'scheduled', 'confirmed'] }
         });
 
-        if (!activeAppointment) {
-            return res.status(403).json({ success: false, message: 'You must have an active scheduled appointment to start a consultation.' });
-        }
-
         // Create a fresh 'requested' pending chat request
         console.log(`[Chat Request] Creating a fresh pending requested chat session.`);
-        const chat = await Chat.create({
+        const chatData = {
             patient: req.user._id,
             doctor: doctorId,
-            appointment: activeAppointment._id,
             status: 'requested',
             features: requestedFeatures,
             paymentStatus: 'pending',
             messages: []
-        });
+        };
+        
+        if (activeAppointment) {
+            chatData.appointment = activeAppointment._id;
+        }
+
+        const chat = await Chat.create(chatData);
 
         console.log(`[Chat Request] Chat request created with chatId: ${chat._id}`);
 
