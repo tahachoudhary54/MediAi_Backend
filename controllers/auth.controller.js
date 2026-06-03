@@ -91,6 +91,7 @@ export const registerPatient = async (req, res, next) => {
         }
 
         try {
+            console.log(`[Patient Registration] Generated OTP for ${user.email}: ${otp}`);
             await sendEmail({
                 email: user.email,
                 subject: 'MediAI - Verify Your Email',
@@ -600,7 +601,7 @@ export const getMe = async (req, res, next) => {
 // @access  Private
 export const updateProfile = async (req, res, next) => {
     try {
-        const { fullName, email, phone, sex, address, dob, bloodGroup, emergencyContact, emergencyLocationEnabled, bio, specialization, licenseNumber, yearsOfExperience, hospitalName, clinicAddress, weeklyAvailability, onlineStatus, breakDuration, dailyBreak, wearableSource } = req.body;
+        const { fullName, email, phone, sex, address, dob, bloodGroup, emergencyContact, emergencyLocationEnabled, bio, specialization, licenseNumber, yearsOfExperience, hospitalName, clinicAddress, weeklyAvailability, onlineStatus, breakDuration, dailyBreak, wearableSource, documents } = req.body;
 
         let user;
         if (req.user.role === 'doctor') {
@@ -620,6 +621,7 @@ export const updateProfile = async (req, res, next) => {
         if (dob !== undefined) user.dob = dob;
         if (bloodGroup !== undefined) user.bloodGroup = bloodGroup;
         if (emergencyContact !== undefined) user.emergencyContact = emergencyContact;
+        if (documents !== undefined) user.documents = documents;
         
         // Patient specific field: wearable source and location tracking
         if (wearableSource !== undefined && req.user.role === 'patient') {
@@ -691,6 +693,7 @@ export const updateProfile = async (req, res, next) => {
                 emergencyContact: user.emergencyContact,
                 emergencyLocationEnabled: user.emergencyLocationEnabled,
                 wearableSource: user.wearableSource,
+                documents: user.documents,
                 bio: user.bio,
                 specialization: user.specialization,
                 licenseNumber: user.licenseNumber,

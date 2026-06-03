@@ -31,6 +31,7 @@ export const createChat = async (req, res, next) => {
             appointment: appointmentId,
             patient: appointment.patient,
             doctor: appointment.doctor,
+            status: 'active',
             messages: []
         });
 
@@ -120,34 +121,6 @@ export const sendMessage = async (req, res, next) => {
                     _id: savedMessage._id
                 }
             });
-
-            // If a doctor sent the message, emit a global notification to the patient
-            // This handles cases where the patient is not currently looking at the chat
-            if (senderModel === 'Doctor') {
-                const patientId = chat.patient._id || chat.patient;
-                
-                // Save notification to database so the bell icon updates
-                try {
-                    await Notification.create({
-                        recipient: patientId,
-                        recipientModel: 'User',
-                        title: `New message from Dr. ${req.user.fullName}`,
-                        message: savedMessage.content.length > 50 ? savedMessage.content.substring(0, 50) + '...' : savedMessage.content,
-                        type: 'general',
-                        route: `/patient/chat?chatId=${chat._id}`,
-                        isRead: false
-                    });
-                } catch (notifErr) {
-                    console.error('[Notification] Failed to save chat notification:', notifErr);
-                }
-
-                console.log(`[Message] Emitting global doctorFollowUpMessage to patient_${patientId}`);
-                io.to(`patient_${patientId}`).emit('doctorFollowUpMessage', {
-                    chatId: chat._id,
-                    doctorName: req.user.fullName,
-                    message: savedMessage
-                });
-            }
         }
 
         res.status(200).json({ success: true, data: chat });
@@ -324,11 +297,23 @@ export const requestConsultation = async (req, res, next) => {
             { $set: { status: 'ended' } }
         );
 
+        // Guard: Ensure patient has an active appointment with this doctor before allowing a new consultation request
+        const activeAppointment = await Appointment.findOne({
+            patient: req.user._id,
+            doctor: doctorId,
+            status: { $in: ['pending', 'scheduled', 'confirmed'] }
+        });
+
+        if (!activeAppointment) {
+            return res.status(403).json({ success: false, message: 'You must have an active scheduled appointment to start a consultation.' });
+        }
+
         // Create a fresh 'requested' pending chat request
         console.log(`[Chat Request] Creating a fresh pending requested chat session.`);
         const chat = await Chat.create({
             patient: req.user._id,
             doctor: doctorId,
+            appointment: activeAppointment._id,
             status: 'requested',
             features: requestedFeatures,
             paymentStatus: 'pending',

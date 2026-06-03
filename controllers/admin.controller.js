@@ -13,7 +13,7 @@ import { createAuditLog } from '../utils/auditLogger.js';
 // --- Users Management ---
 export const getAllUsers = async (req, res) => {
     try {
-        const users = await User.find({ role: 'patient' })
+        const users = await User.find({ role: 'patient', isVerified: true })
             .select('-password')
             .sort({ createdAt: -1 });
         res.status(200).json({ success: true, data: users });
@@ -218,11 +218,32 @@ export const verifyDoctor = async (req, res) => {
         try {
             if (status === 'approved') {
                 const approvalMessage = `Dear Dr. ${doctor.fullName},\n\nCongratulations! Your account has been approved.\n\nLogin at: ${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/login?role=doctor\n\nBest regards,\nMediAI Team`;
+                
+                // HTML template for the email
+                const htmlTemplate = `
+                <div style="font-family: Arial, sans-serif; padding: 20px; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+                  <h2 style="color: #0d9488; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">MediAI Healthcare</h2>
+                  <p>Dear Dr. ${doctor.fullName},</p>
+                  <p>Congratulations! Your account verification has been approved.</p>
+                  <p>Before you can log in, please verify your email address. Your verification code is:</p>
+                  <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #0d9488; margin: 20px 0; padding: 15px; background: #f0fdfa; border-radius: 8px; text-align: center; border: 1px dashed #5eead4;">
+                    ${doctor.otp}
+                  </div>
+                  <p>This code will expire in 5 minutes.</p>
+                  <p>You can login here: <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/login?role=doctor">Login Page</a></p>
+                  <br>
+                  <p style="color: #64748b; font-size: 14px;">Best regards,<br>The MediAI Team</p>
+                </div>
+                `;
+
+                console.log(`[Doctor Approved] Generated OTP for ${doctor.email}: ${doctor.otp}`);
+                
                 await sendEmail({
-            email: doctor.email,
-            subject: 'MediAI - Account Approved! 🎉',
-            message: `${approvalMessage}\n\nYour verification OTP is: ${doctor.otp}\nIt will expire in 5 minutes.`
-          });
+                    email: doctor.email,
+                    subject: 'MediAI - Account Approved! 🎉',
+                    message: `${approvalMessage}\n\nYour verification OTP is: ${doctor.otp}\nIt will expire in 5 minutes.`,
+                    html: htmlTemplate
+                });
             } else {
                 const rejectionMessage = `Dear Dr. ${doctor.fullName},\n\nYour account verification was rejected.\n\nReason: ${rejectionReason || 'Not specified'}\n\nBest regards,\nMediAI Team`;
                 await sendEmail({ email: doctor.email, subject: 'MediAI - Account Verification Update', message: rejectionMessage });

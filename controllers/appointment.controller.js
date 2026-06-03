@@ -82,7 +82,8 @@ export const createAppointment = async (req, res, next) => {
             date,
             time,
             consultationType,
-            reason
+            reason,
+            paymentStatus: 'pending'
         });
         
         res.status(201).json({ success: true, data: appointment });
@@ -298,13 +299,13 @@ export const updateAppointment = async (req, res, next) => {
                     message: `${appointment.patient.fullName} has suggested a new time.`
                 });
             }
-        } else if (appointment.status === 'approved_pending_payment') {
+        } else if (appointment.status === 'scheduled') {
             // Notify Patient
             await Notification.create({
                 recipient: appointment.patient._id,
                 recipientModel: 'User',
                 title: 'Appointment Schedule Approved',
-                message: `Your appointment schedule with Dr. ${appointment.doctor.fullName} has been approved! Please pay now to secure your booking.`,
+                message: `Your appointment schedule with Dr. ${appointment.doctor.fullName} has been approved and is now scheduled!`,
                 type: 'appointment_update',
                 route: '/patient/appointments'
             });
@@ -312,15 +313,15 @@ export const updateAppointment = async (req, res, next) => {
             if (appointment.patient.email) {
                 await sendEmail({
                     email: appointment.patient.email,
-                    subject: 'MediAI Appointment Schedule Approved - Payment Pending',
-                    message: `Hello ${appointment.patient.fullName},\n\nYour appointment schedule with Dr. ${appointment.doctor.fullName} on ${new Date(appointment.date).toLocaleDateString()} at ${appointment.time} has been approved!\n\nPlease log in and complete the payment to finalize your booking.\n\nMediAI Healthcare`
+                    subject: 'MediAI Appointment Schedule Approved',
+                    message: `Hello ${appointment.patient.fullName},\n\nYour appointment schedule with Dr. ${appointment.doctor.fullName} on ${new Date(appointment.date).toLocaleDateString()} at ${appointment.time} has been approved and is now scheduled!\n\nMediAI Healthcare`
                 });
             }
 
             if (io) {
                 io.to(`patient_${appointment.patient._id}`).emit('appointmentApproved', {
                     appointmentId: appointment._id,
-                    message: `Dr. ${appointment.doctor.fullName} has approved the schedule. Please pay to finalize.`
+                    message: `Dr. ${appointment.doctor.fullName} has approved the schedule.`
                 });
             }
         } else if (appointment.status === 'cancelled') {

@@ -23,6 +23,11 @@ const userSchema = new mongoose.Schema({
     currentMedications: [{ type: String }],
     previousDiseaseHistory: [{ type: String }],
     familyDiseaseHistory: [{ type: String }],
+    documents: [{
+        title: String,
+        url: String,
+        uploadedAt: { type: Date, default: Date.now }
+    }],
     emergencyContact: {
         name: String,
         phone: String,

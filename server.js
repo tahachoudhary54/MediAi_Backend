@@ -58,9 +58,9 @@ io.on('connection', (socket) => {
     });
 
     // WebRTC Signaling Events
-    socket.on('callUser', (data) => {
+    socket.on('callUser', async (data) => {
         console.log(`[Socket] Call initiated from ${data.from} to room ${data.roomToCall}`);
-        socket.to(data.roomToCall).emit('callUser', {
+        const payload = {
             signal: data.signalData,
             from: data.from,
             name: data.name,
@@ -68,7 +68,23 @@ io.on('connection', (socket) => {
             callerModel: data.callerModel,
             callerId: data.callerId,
             chatId: data.chatId
-        });
+        };
+        socket.to(data.roomToCall).emit('callUser', payload);
+        
+        // Broadcast to personal room so user gets notification even if not on chat page
+        try {
+            const Chat = (await import('./models/Chat.js')).default;
+            const chat = await Chat.findById(data.chatId);
+            if (chat) {
+                if (data.callerModel === 'User') {
+                    socket.to(`doctor_${chat.doctor}`).emit('callUser', payload);
+                } else if (data.callerModel === 'Doctor') {
+                    socket.to(`patient_${chat.patient}`).emit('callUser', payload);
+                }
+            }
+        } catch (err) {
+            console.error("Error looking up chat for global call routing", err);
+        }
     });
 
     socket.on('answerCall', (data) => {
