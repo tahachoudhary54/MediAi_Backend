@@ -52,3 +52,30 @@ export const protect = async (req, res, next) => {
         res.status(401).json({ success: false, message: 'Not authorized, no token' });
     }
 };
+
+export const optionalProtect = async (req, res, next) => {
+    if (
+        req.headers.authorization &&
+        req.headers.authorization.startsWith('Bearer')
+    ) {
+        try {
+            const token = req.headers.authorization.split(' ')[1];
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+            if (decoded.role === 'doctor') {
+                req.user = await Doctor.findById(decoded.id).select('-password');
+            } else {
+                req.user = await User.findById(decoded.id).select('-password');
+            }
+
+            if (req.user) {
+                const userObj = req.user.toObject();
+                req.user = userObj;
+                req.user.role = decoded.role;
+            }
+        } catch (error) {
+            console.error('[Optional Auth] Token validation failed:', error.message);
+        }
+    }
+    next();
+};

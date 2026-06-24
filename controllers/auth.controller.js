@@ -6,7 +6,9 @@ import generateToken from '../utils/generateToken.js';
 import crypto from 'crypto';
 import sendEmail from '../utils/sendEmail.js';
 import Notification from '../models/Notification.js';
-
+import { getFaceEmbedding } from '../services/faceRecognition.service.js';
+import { encryptData } from '../utils/encryption.js';
+import fs from 'fs';
 // Helper to generate OTP
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -52,6 +54,10 @@ export const registerPatient = async (req, res, next) => {
     try {
         let { fullName, email, password, age, sex, bloodGroup, allergies, currentMedications, previousDiseaseHistory, familyDiseaseHistory, emergencyContact, location } = req.body;
         if (email) email = email.toLowerCase();
+        
+        if (typeof emergencyContact === 'string') {
+            try { emergencyContact = JSON.parse(emergencyContact); } catch(e) {}
+        }
 
         let userExists = await User.findOne({ email });
         const doctorExists = await Doctor.findOne({ email });
@@ -79,15 +85,53 @@ export const registerPatient = async (req, res, next) => {
             userExists.familyDiseaseHistory = familyDiseaseHistory;
             userExists.emergencyContact = emergencyContact;
             userExists.location = location;
+            let embeddingString = null;
+            let emergencyEnabled = false;
+
+            if (req.file) {
+                userExists.avatar = req.file.filename;
+                try {
+                    const buffer = fs.readFileSync(req.file.path);
+                    const embedding = await getFaceEmbedding(buffer);
+                    if (embedding) {
+                        embeddingString = encryptData(JSON.stringify(embedding));
+                        emergencyEnabled = true;
+                    }
+                } catch (err) {
+                    console.error("Error extracting face embedding during registration:", err);
+                }
+            }
+
+            if (embeddingString) {
+                userExists.faceEmbedding = embeddingString;
+                userExists.emergencyEnabled = emergencyEnabled;
+            }
+
             userExists.otp = otp;
             userExists.otpExpire = otpExpire;
             await userExists.save();
             user = userExists;
         } else {
-            user = await User.create({
+            const newUser = {
                 fullName, email, password, role: 'patient', age, sex, bloodGroup, allergies, currentMedications, previousDiseaseHistory, familyDiseaseHistory, emergencyContact, location,
                 otp, otpExpire, isVerified: false
-            });
+            };
+
+            if (req.file) {
+                newUser.avatar = req.file.filename;
+                try {
+                    const buffer = fs.readFileSync(req.file.path);
+                    const embedding = await getFaceEmbedding(buffer);
+                    if (embedding) {
+                        newUser.faceEmbedding = encryptData(JSON.stringify(embedding));
+                        newUser.emergencyEnabled = true;
+                    }
+                } catch (err) {
+                    console.error("Error extracting face embedding during registration:", err);
+                }
+            }
+
+            user = await User.create(newUser);
         }
 
         try {
@@ -738,6 +782,57 @@ export const updateAvatar = async (req, res, next) => {
             success: true,
             message: 'Avatar updated successfully',
             data: { avatar: req.file.filename }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Update emergency face profile
+// @route   PATCH /api/auth/emergency-profile
+// @access  Private
+export const updateEmergencyProfile = async (req, res, next) => {
+    try {
+        let user;
+        if (req.user.role === 'doctor') {
+            user = await Doctor.findById(req.user._id);
+        } else {
+            user = await User.findById(req.user._id);
+        }
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const { emergencyEnabled } = req.body;
+
+        if (emergencyEnabled !== undefined) {
+            user.emergencyEnabled = emergencyEnabled === 'true' || emergencyEnabled === true;
+        }
+
+        if (req.file) {
+            // Check if it's a memory buffer or a file path (multer config dependent)
+            let buffer = req.file.buffer;
+            if (!buffer && req.file.path) {
+                const fs = await import('fs');
+                buffer = fs.readFileSync(req.file.path);
+            }
+            const embedding = await getFaceEmbedding(buffer);
+            if (!embedding) {
+                return res.status(400).json({ success: false, message: 'No face detected in the image' });
+            }
+            const encrypted = encryptData(JSON.stringify(embedding));
+            user.faceEmbedding = encrypted;
+        }
+
+        await user.save({ validateBeforeSave: false });
+
+        res.status(200).json({
+            success: true,
+            message: 'Emergency profile updated successfully',
+            data: {
+                emergencyEnabled: user.emergencyEnabled
+            }
         });
     } catch (error) {
         next(error);

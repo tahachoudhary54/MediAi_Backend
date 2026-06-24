@@ -1,6 +1,9 @@
 import aiClient from '../utils/aiClient.js';
 import fs from 'fs';
 import path from 'path';
+import sharp from 'sharp';
+
+import Tesseract from 'tesseract.js';
 
 // @desc    Prescription OCR - Extract medications from uploaded image using AI Vision
 // @route   POST /api/ai/prescription-ocr
@@ -11,58 +14,82 @@ export const prescriptionOCR = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'No prescription image uploaded' });
         }
 
-        // Read the uploaded file and convert to base64
         const filePath = path.join(process.cwd(), 'uploads', req.file.filename);
         const fileBuffer = fs.readFileSync(filePath);
-        const base64Image = fileBuffer.toString('base64');
-        const mimeType = req.file.mimetype; // e.g. image/jpeg, image/png
+        
+        // 1. Image Quality Validation
+        const metadata = await sharp(fileBuffer).metadata();
+        if (metadata.width < 400 || metadata.height < 400) {
+            throw new Error("QUALITY_LOW_RESOLUTION");
+        }
 
-        const response = await aiClient.chat.completions.create({
-            model: 'meta-llama/llama-4-scout-17b-16e-instruct', // Groq vision model
-            messages: [
-                {
-                    role: 'user',
-                    content: [
-                        {
-                            type: 'text',
-                            text: `You are a medical OCR assistant. Analyze this prescription image carefully and extract ALL medications listed.
+        const stats = await sharp(fileBuffer).stats();
+        const brightness = stats.channels[0].mean;
+        if (brightness < 30) {
+            throw new Error("QUALITY_TOO_DARK");
+        }
 
-Return ONLY a valid JSON object with this exact structure:
-{
-  "doctorName": "string or null",
-  "patientName": "string or null", 
-  "date": "string or null",
-  "diagnosis": "string or null",
-  "medications": [
-    {
-      "name": "medication name with strength",
-      "dosage": "e.g. 1 tablet / 5ml",
-      "frequency": "e.g. twice daily / TDS",
-      "duration": "e.g. 7 days",
-      "instructions": "e.g. after meals, with water"
-    }
-  ],
-  "notes": "any additional instructions or null"
-}
+        // 2. Image Preprocessing (Orientation, Grayscale, Contrast, Blur/Sharpen)
+        const processedImageBuffer = await sharp(fileBuffer)
+            .rotate() // Auto-orient based on EXIF
+            .grayscale() // Convert to grayscale
+            .normalize() // Enhance global contrast
+            // CLAHE acts like adaptive thresholding to bring out text in shadows
+            .clahe({ width: 200, height: 200, maxSlope: 3 })
+            .blur(0.5) // Remove high frequency noise (Gaussian blur)
+            .sharpen({ sigma: 1.5, m1: 1, m2: 20 }) // Sharpen text edges
+            .jpeg({ quality: 80 }) // Compress for performance
+            .toBuffer();
 
-If a field cannot be read or determined, use null. Extract ALL medications visible. Be precise.`
-                        },
-                        {
-                            type: 'image_url',
-                            image_url: {
-                                url: `data:${mimeType};base64,${base64Image}`
-                            }
-                        }
-                    ]
-                }
-            ],
-            response_format: { type: 'json_object' },
-            max_tokens: 1024
-        });
+        const base64Image = processedImageBuffer.toString('base64');
+        const mimeType = 'image/jpeg';
 
-        const extracted = JSON.parse(response.choices[0].message.content);
+        // 3. Stage 1: Tesseract OCR Pass
+        console.log('Running primary OCR (Tesseract)...');
+        const { data: { text, confidence: ocrConfidence } } = await Tesseract.recognize(processedImageBuffer, 'eng');
+        console.log(`Tesseract OCR Confidence: ${ocrConfidence}%`);
 
-        // Clean up uploaded file after processing
+        let extracted;
+        const SYSTEM_PROMPT = 'You are an advanced medical parsing AI. Return ONLY a valid JSON object strictly matching this structure:\n{\n  "doctor": "Extracted Doctor Name or null",\n  "medicines": [\n    {\n      "name": "Medicine Name",\n      "dosage": "Dosage (e.g., 500mg, 1 tablet)",\n      "frequency": "Frequency (e.g., Twice daily, TDS)",\n      "duration": "Duration (e.g., 5 days)",\n      "uncertain": false\n    }\n  ],\n  "confidence": 95\n}\n\nThe "uncertain" field should be a boolean set to true ONLY if you are not very sure about the extraction (due to messy handwriting, unusual spelling, or poor image quality).';
+
+        // 4. Hybrid Logic: If OCR confidence is high, parse text; else fallback to Vision AI
+        if (ocrConfidence >= 85 && text.trim().length > 10) {
+            console.log('High OCR confidence. Parsing text with LLM...');
+            const response = await aiClient.chat.completions.create({
+                model: 'llama3-8b-8192', // Fast text model
+                messages: [
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    { role: 'user', content: `Parse the following accurate OCR text extracted from a printed prescription:\n\n${text}` }
+                ],
+                response_format: { type: 'json_object' },
+                max_tokens: 1024,
+                temperature: 0.1
+            });
+            extracted = JSON.parse(response.choices[0].message.content);
+            // Blend confidences or trust LLM confidence
+            extracted.confidence = Math.min(Math.round(ocrConfidence), extracted.confidence || 95);
+        } else {
+            console.log('Low OCR confidence (handwriting/noisy). Falling back to Vision AI...');
+            const response = await aiClient.chat.completions.create({
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                messages: [
+                    { role: 'system', content: SYSTEM_PROMPT + '\nYou are analyzing the actual prescription image. Pay close attention to messy handwriting. Use your vision capabilities to accurately identify handwritten medicine names.' },
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: 'Extract doctor and medicines from this prescription. Remember to flag uncertain items.' },
+                            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                        ]
+                    }
+                ],
+                response_format: { type: 'json_object' },
+                max_tokens: 1024,
+                temperature: 0.1
+            });
+            extracted = JSON.parse(response.choices[0].message.content);
+        }
+
+        // Clean up uploaded file
         fs.unlink(filePath, (err) => {
             if (err) console.error('Failed to delete temp OCR file:', err.message);
         });
@@ -75,15 +102,22 @@ If a field cannot be read or determined, use null. Extract ALL medications visib
     } catch (error) {
         console.error('Prescription OCR Error:', error.message || error);
 
-        // Clean up file on error too
+        // Clean up file on error
         if (req.file) {
             const filePath = path.join(process.cwd(), 'uploads', req.file.filename);
             fs.unlink(filePath, () => {});
         }
 
-        res.status(error.status || 500).json({
+        let errorMessage = 'Failed to process prescription image';
+        if (error.message === 'QUALITY_LOW_RESOLUTION') {
+            errorMessage = 'Image resolution is too low. Please upload a clearer, higher-quality image of the prescription.';
+        } else if (error.message === 'QUALITY_TOO_DARK') {
+            errorMessage = 'Image is too dark. Please take a photo in a well-lit environment.';
+        }
+
+        res.status(400).json({
             success: false,
-            message: error.message || 'Failed to process prescription image'
+            message: errorMessage
         });
     }
 };

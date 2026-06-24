@@ -1,11 +1,11 @@
 import express from 'express';
-import { registerPatient, registerDoctor, login, getMe, forgotPassword, resetPassword, changePassword, reverifyDoctor, updateProfile, updateAvatar, verifyOtp, resendOtp } from '../controllers/auth.controller.js';
+import { registerPatient, registerDoctor, login, getMe, forgotPassword, resetPassword, changePassword, reverifyDoctor, updateProfile, updateAvatar, verifyOtp, resendOtp, updateEmergencyProfile } from '../controllers/auth.controller.js';
 import upload from '../middleware/upload.middleware.js';
 import { protect } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 
-router.post('/register', registerPatient);
+router.post('/register', upload.single('profilePhoto'), registerPatient);
 router.post('/verify-otp', verifyOtp);
 router.post('/resend-otp', resendOtp);
 
@@ -33,5 +33,6 @@ router.post('/reset-password/:token', resetPassword);
 router.put('/change-password', protect, changePassword);
 router.patch('/profile', protect, updateProfile);
 router.patch('/avatar', protect, upload.single('avatar'), updateAvatar);
+router.patch('/emergency-profile', protect, upload.single('faceImage'), updateEmergencyProfile);
 
 export default router;

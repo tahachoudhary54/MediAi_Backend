@@ -45,6 +45,15 @@ const userSchema = new mongoose.Schema({
     },
     emergencyLocationEnabled: { type: Boolean, default: false },
 
+    // Emergency face scan specific
+    faceEmbedding: { type: String, select: false }, // Store as encrypted string vector
+    emergencyEnabled: { type: Boolean, default: false },
+    familyContact: {
+        name: String,
+        phone: String,
+        relation: String
+    },
+
     // Region assignment
     region: { type: String, default: 'Global' },
 
