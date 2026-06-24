@@ -53,6 +53,8 @@ export const prescriptionOCR = async (req, res, next) => {
         const SYSTEM_PROMPT = 'You are an advanced medical parsing AI. Return ONLY a valid JSON object strictly matching this structure:\n{\n  "doctor": "Extracted Doctor Name or null",\n  "medicines": [\n    {\n      "name": "Medicine Name",\n      "dosage": "Dosage (e.g., 500mg, 1 tablet)",\n      "frequency": "Frequency (e.g., Twice daily, TDS)",\n      "duration": "Duration (e.g., 5 days)",\n      "uncertain": false\n    }\n  ],\n  "confidence": 95\n}\n\nThe "uncertain" field should be a boolean set to true ONLY if you are not very sure about the extraction (due to messy handwriting, unusual spelling, or poor image quality).';
 
         // 4. Hybrid Logic: If OCR confidence is high, parse text; else fallback to Vision AI
+        let usedVision = false;
+
         if (ocrConfidence >= 85 && text.trim().length > 10) {
             console.log('High OCR confidence. Parsing text with LLM...');
             const response = await aiClient.chat.completions.create({
@@ -66,12 +68,15 @@ export const prescriptionOCR = async (req, res, next) => {
                 temperature: 0.1
             });
             extracted = JSON.parse(response.choices[0].message.content);
-            // Blend confidences or trust LLM confidence
             extracted.confidence = Math.min(Math.round(ocrConfidence), extracted.confidence || 95);
-        } else {
-            console.log('Low OCR confidence (handwriting/noisy). Falling back to Vision AI...');
+        }
+        
+        // If OCR had low confidence, OR if OCR had high confidence but the LLM couldn't find any valid medicines (garbage text), use Vision AI
+        if (!extracted || !extracted.medicines || extracted.medicines.length === 0) {
+            console.log('OCR text was unparseable or confidence was low. Falling back to Vision AI...');
+            usedVision = true;
             const response = await aiClient.chat.completions.create({
-                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                model: 'llama-3.2-90b-vision-preview', // Correct Groq Vision model
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT + '\nYou are analyzing the actual prescription image. Pay close attention to messy handwriting. Use your vision capabilities to accurately identify handwritten medicine names.' },
                     {
