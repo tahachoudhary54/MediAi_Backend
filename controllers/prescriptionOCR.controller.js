@@ -45,9 +45,18 @@ export const prescriptionOCR = async (req, res, next) => {
         const mimeType = 'image/jpeg';
 
         // 3. Stage 1: Tesseract OCR Pass
-        console.log('Running primary OCR (Tesseract)...');
-        const { data: { text, confidence: ocrConfidence } } = await Tesseract.recognize(processedImageBuffer, 'eng');
-        console.log(`Tesseract OCR Confidence: ${ocrConfidence}%`);
+        let text = '';
+        let ocrConfidence = 0;
+        try {
+            console.log('Running primary OCR (Tesseract)...');
+            const result = await Tesseract.recognize(processedImageBuffer, 'eng');
+            text = result.data.text;
+            ocrConfidence = result.data.confidence;
+            console.log(`Tesseract OCR Confidence: ${ocrConfidence}%`);
+        } catch (tesseractError) {
+            console.error('Tesseract OCR crashed on server:', tesseractError.message);
+            // If Tesseract fails entirely, ocrConfidence remains 0, which triggers the Vision AI fallback safely
+        }
 
         let extracted;
         const SYSTEM_PROMPT = 'You are an advanced medical parsing AI. Return ONLY a valid JSON object strictly matching this structure:\n{\n  "doctor": "Extracted Doctor Name or null",\n  "medicines": [\n    {\n      "name": "Medicine Name",\n      "dosage": "Dosage (e.g., 500mg, 1 tablet)",\n      "frequency": "Frequency (e.g., Twice daily, TDS)",\n      "duration": "Duration (e.g., 5 days)",\n      "uncertain": false\n    }\n  ],\n  "confidence": 95\n}\n\nThe "uncertain" field should be a boolean set to true ONLY if you are not very sure about the extraction (due to messy handwriting, unusual spelling, or poor image quality).';
