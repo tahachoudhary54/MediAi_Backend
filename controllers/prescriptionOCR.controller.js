@@ -83,18 +83,11 @@ export const prescriptionOCR = async (req, res, next) => {
         
         // If OCR had low confidence, OR if OCR had high confidence but the LLM couldn't find any valid medicines (garbage text), use Vision AI
         if (!extracted || !extracted.medicines || extracted.medicines.length === 0) {
-            console.log('OCR text was unparseable or confidence was low. Falling back to Vision AI (xAI)...');
+            console.log('OCR text was unparseable or confidence was low. Falling back to Vision AI (Groq Llama 4 Scout)...');
             usedVision = true;
-            
-            // Create a dedicated xAI client for vision since Groq decommissioned their vision models
-            const OpenAI = (await import('openai')).default;
-            const xaiVisionClient = new OpenAI({
-                apiKey: process.env.XAI_API_KEY,
-                baseURL: 'https://api.x.ai/v1',
-            });
 
-            const response = await xaiVisionClient.chat.completions.create({
-                model: 'grok-vision-beta', // Stable xAI Vision model
+            const response = await aiClient.chat.completions.create({
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct', // Groq's new natively multimodal vision model
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT + '\nYou are analyzing the actual prescription image. Pay close attention to messy handwriting. Use your vision capabilities to accurately identify handwritten medicine names.' },
                     {
