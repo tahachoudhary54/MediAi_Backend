@@ -86,7 +86,7 @@ export const prescriptionOCR = async (req, res, next) => {
             console.log('OCR text was unparseable or confidence was low. Falling back to Vision AI...');
             usedVision = true;
             const response = await aiClient.chat.completions.create({
-                model: 'llama-3.2-90b-vision-preview', // Correct Groq Vision model
+                model: 'llama-3.2-11b-vision-preview', // Correct Groq Vision model (90b was decommissioned)
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT + '\nYou are analyzing the actual prescription image. Pay close attention to messy handwriting. Use your vision capabilities to accurately identify handwritten medicine names.' },
                     {
