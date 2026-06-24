@@ -90,16 +90,6 @@ export const registerPatient = async (req, res, next) => {
 
             if (req.file) {
                 userExists.avatar = req.file.filename;
-                try {
-                    const buffer = fs.readFileSync(req.file.path);
-                    const embedding = await getFaceEmbedding(buffer);
-                    if (embedding) {
-                        embeddingString = encryptData(JSON.stringify(embedding));
-                        emergencyEnabled = true;
-                    }
-                } catch (err) {
-                    console.error("Error extracting face embedding during registration:", err);
-                }
             }
 
             if (embeddingString) {
@@ -111,6 +101,24 @@ export const registerPatient = async (req, res, next) => {
             userExists.otpExpire = otpExpire;
             await userExists.save();
             user = userExists;
+
+            // Process face embedding in the background
+            if (req.file) {
+                const imagePath = req.file.path;
+                setTimeout(async () => {
+                    try {
+                        const buffer = fs.readFileSync(imagePath);
+                        const embedding = await getFaceEmbedding(buffer);
+                        if (embedding) {
+                            user.faceEmbedding = encryptData(JSON.stringify(embedding));
+                            user.emergencyEnabled = true;
+                            await user.save();
+                        }
+                    } catch (err) {
+                        console.error("Background face embedding failed:", err);
+                    }
+                }, 100);
+            }
         } else {
             const newUser = {
                 fullName, email, password, role: 'patient', age, sex, bloodGroup, allergies, currentMedications, previousDiseaseHistory, familyDiseaseHistory, emergencyContact, location,
@@ -119,19 +127,28 @@ export const registerPatient = async (req, res, next) => {
 
             if (req.file) {
                 newUser.avatar = req.file.filename;
-                try {
-                    const buffer = fs.readFileSync(req.file.path);
-                    const embedding = await getFaceEmbedding(buffer);
-                    if (embedding) {
-                        newUser.faceEmbedding = encryptData(JSON.stringify(embedding));
-                        newUser.emergencyEnabled = true;
-                    }
-                } catch (err) {
-                    console.error("Error extracting face embedding during registration:", err);
-                }
             }
 
             user = await User.create(newUser);
+
+            // Process face embedding in the background to avoid blocking the registration response
+            if (req.file) {
+                const imagePath = req.file.path;
+                setTimeout(async () => {
+                    try {
+                        const buffer = fs.readFileSync(imagePath);
+                        const embedding = await getFaceEmbedding(buffer);
+                        if (embedding) {
+                            user.faceEmbedding = encryptData(JSON.stringify(embedding));
+                            user.emergencyEnabled = true;
+                            await user.save();
+                            console.log(`[Patient Registration] Background face embedding completed for ${user.email}`);
+                        }
+                    } catch (err) {
+                        console.error("Background face embedding failed:", err);
+                    }
+                }, 100);
+            }
         }
 
         try {

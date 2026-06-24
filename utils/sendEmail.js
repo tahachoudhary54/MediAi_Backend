@@ -18,7 +18,10 @@ const sendEmail = async (options) => {
             },
             tls: {
                 rejectUnauthorized: false
-            }
+            },
+            connectionTimeout: 5000,
+            greetingTimeout: 5000,
+            socketTimeout: 5000
         });
     } else {
         // Fallback for demo: just log the email content
