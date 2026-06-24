@@ -776,6 +776,22 @@ export const updateAvatar = async (req, res, next) => {
         }
 
         user.avatar = req.file.filename;
+
+        // Also extract face embedding for emergency recognition automatically
+        try {
+            const buffer = fs.readFileSync(req.file.path);
+            const embedding = await getFaceEmbedding(buffer);
+            if (embedding) {
+                user.faceEmbedding = encryptData(JSON.stringify(embedding));
+                // If it's a patient, enable emergency discovery
+                if (user.role === 'patient') {
+                    user.emergencyEnabled = true;
+                }
+            }
+        } catch (err) {
+            console.error("Error extracting face embedding during avatar update:", err);
+        }
+
         await user.save({ validateBeforeSave: false });
 
         res.status(200).json({
