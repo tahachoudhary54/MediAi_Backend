@@ -31,6 +31,7 @@ export const prescriptionOCR = async (req, res, next) => {
 
         // 2. Image Preprocessing (Orientation, Grayscale, Contrast, Blur/Sharpen)
         const processedImageBuffer = await sharp(fileBuffer)
+            .resize({ width: 1600, withoutEnlargement: true }) // Resize large images to prevent Vision AI payload errors
             .rotate() // Auto-orient based on EXIF
             .grayscale() // Convert to grayscale
             .normalize() // Enhance global contrast
@@ -122,7 +123,7 @@ export const prescriptionOCR = async (req, res, next) => {
             fs.unlink(filePath, () => {});
         }
 
-        let errorMessage = 'Failed to process prescription image';
+        let errorMessage = error.message || 'Failed to process prescription image';
         if (error.message === 'QUALITY_LOW_RESOLUTION') {
             errorMessage = 'Image resolution is too low. Please upload a clearer, higher-quality image of the prescription.';
         } else if (error.message === 'QUALITY_TOO_DARK') {
