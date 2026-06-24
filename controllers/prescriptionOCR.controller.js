@@ -50,13 +50,21 @@ export const prescriptionOCR = async (req, res, next) => {
         let ocrConfidence = 0;
         try {
             console.log('Running primary OCR (Tesseract)...');
-            const result = await Tesseract.recognize(processedImageBuffer, 'eng');
+            
+            // Tesseract can hang on cloud servers while downloading language data.
+            // We use a 4-second timeout to force a fast fallback to Vision AI if it takes too long.
+            const tesseractPromise = Tesseract.recognize(processedImageBuffer, 'eng');
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Tesseract timeout')), 4000)
+            );
+            
+            const result = await Promise.race([tesseractPromise, timeoutPromise]);
             text = result.data.text;
             ocrConfidence = result.data.confidence;
             console.log(`Tesseract OCR Confidence: ${ocrConfidence}%`);
         } catch (tesseractError) {
-            console.error('Tesseract OCR crashed on server:', tesseractError.message);
-            // If Tesseract fails entirely, ocrConfidence remains 0, which triggers the Vision AI fallback safely
+            console.error('Tesseract OCR skipped/crashed:', tesseractError.message);
+            // If Tesseract times out or fails entirely, ocrConfidence remains 0, triggering the fast Vision AI fallback
         }
 
         let extracted;
