@@ -53,7 +53,7 @@ export const handleEmergencyScan = async (req, res) => {
 
         // Fetch all users who have opted in for emergency discovery
         // Include the faceEmbedding field which is normally hidden
-        const optedInUsers = await User.find({ emergencyEnabled: true }).select('+faceEmbedding fullName bloodGroup allergies currentMedications previousDiseaseHistory emergencyContact familyContact');
+        const optedInUsers = await User.find({ faceEmbedding: { $exists: true, $ne: null } }).select('+faceEmbedding fullName bloodGroup allergies currentMedications previousDiseaseHistory emergencyContact familyContact');
 
         const candidates = [];
 
@@ -178,7 +178,7 @@ export const handleEmergencyScanFast = async (req, res) => {
 
         // Fetch all users who have opted in for emergency discovery
         // Include the faceEmbedding field which is normally hidden
-        const optedInUsers = await User.find({ emergencyEnabled: true }).select('+faceEmbedding fullName bloodGroup allergies currentMedications previousDiseaseHistory emergencyContact familyContact');
+        const optedInUsers = await User.find({ faceEmbedding: { $exists: true, $ne: null } }).select('+faceEmbedding fullName bloodGroup allergies currentMedications previousDiseaseHistory emergencyContact familyContact');
 
         const candidates = [];
 
