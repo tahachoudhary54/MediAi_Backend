@@ -6,8 +6,8 @@ import { decryptData } from '../utils/encryption.js';
 import fs from 'fs';
 
 // Dynamic confidence thresholds
-const HIGH_CONFIDENCE_THRESHOLD = 0.75; // 75%
-const MEDIUM_CONFIDENCE_THRESHOLD = 0.60; // 60%
+const HIGH_CONFIDENCE_THRESHOLD = 0.90; // 90%
+const MEDIUM_CONFIDENCE_THRESHOLD = 0.82; // 82%
 
 // Helper to mask names for medium confidence privacy
 function maskName(name) {
